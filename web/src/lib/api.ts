@@ -1,15 +1,43 @@
-import { getIdToken } from 'firebase/auth';
-import { auth } from './firebase';
+export type AuthUser = { id: string; username: string };
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+type ApiErrorBody = { error?: string };
+
+let csrfToken = '';
+
+function csrfFromCookie(): string {
+  if (typeof document === 'undefined') return '';
+  return document.cookie.split('; ').find((part) => part.startsWith('kinan_csrf='))?.slice('kinan_csrf='.length) || '';
+}
+
+export function setCsrfToken(token: string | null | undefined) {
+  csrfToken = token || '';
+}
+
+export class ApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = auth?.currentUser ? await getIdToken(auth.currentUser) : null;
+  if (!path.startsWith('/api/')) throw new Error('API requests must use a same-origin /api/ path');
+
   const headers = new Headers(options.headers);
-  headers.set('Content-Type', 'application/json');
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
+  if (options.body != null && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  const method = (options.method || 'GET').toUpperCase();
+  const csrf = csrfToken || csrfFromCookie();
+  if (csrf && !['GET', 'HEAD', 'OPTIONS'].includes(method)) headers.set('X-CSRF-Token', csrf);
+
+  const response = await fetch(path, {
+    ...options,
+    credentials: 'include',
+    headers
+  });
+  const body = response.status === 204 ? undefined : await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = body as ApiErrorBody | undefined;
+    throw new ApiError(response.status, error?.error || `Request failed (${response.status})`);
+  }
   return body as T;
 }

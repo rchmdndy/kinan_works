@@ -1,23 +1,21 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { browserLocalPersistence, onAuthStateChanged, setPersistence, signInWithEmailAndPassword, signOut, type User } from 'firebase/auth';
-  import { limitToLast, onValue, orderByChild, query, ref } from 'firebase/database';
-  import { api } from './lib/api';
+  import { api, ApiError, setCsrfToken, type AuthUser } from './lib/api';
   import { drawChart } from './lib/chart';
-  import { lastTelemetrySamples } from './lib/telemetry';
+  import { connectTelemetryEvents, mergeTelemetrySamples, type TelemetryConnectionState } from './lib/telemetry';
   import { hasDeviceDraftErrors, normalizeDeviceDraft, validateDeviceDraft, type DeviceDraftErrors, type ParameterDraft } from './lib/device-form';
   import { buildExportTable, formatReading } from './lib/export-data';
   import { exportTelemetry } from './lib/export';
-  import { auth, database, firebaseSetupError } from './lib/firebase';
   import type { Device, Parameter, TelemetryPacket } from './lib/types';
 
   type Route = { page: 'devices' | 'new' | 'exports' } | { page: 'detail' | 'edit' | 'realtime'; id: string };
   const emptyErrors: DeviceDraftErrors = { parameter: [] };
 
-  let user: User | null = null;
-  let email = '';
+  let user: AuthUser | null = null;
+  let sessionBusy = true;
+  let username = '';
   let password = '';
-  let message = firebaseSetupError;
+  let message = '';
   let notice = '';
   let authBusy = false;
   let devicesBusy = false;
@@ -33,8 +31,9 @@
   let chartCanvas: HTMLCanvasElement;
   let chart: ReturnType<typeof drawChart> | null = null;
   let unsubscribeTelemetry: (() => void) | null = null;
-  let unsubscribeAuth: (() => void) | null = null;
+  let telemetryState: TelemetryConnectionState = 'connecting';
   let staleTimer: ReturnType<typeof setInterval> | null = null;
+  let sessionVersion = 0;
   let selectionVersion = 0;
   let now = Date.now();
   let route: Route = { page: 'devices' };
@@ -54,6 +53,14 @@
   $: selectedDevice = devices.find((device) => device.id === selectedId) || null;
   $: exportDevice = devices.find((device) => device.id === exportDeviceId) || null;
   $: stale = latest ? now - latest.timestamp > 2 * 60 * 1000 : true;
+  $: realtimeUnavailable = telemetryState !== 'open' || stale;
+  $: realtimeStatus = telemetryState === 'error'
+    ? 'Koneksi realtime terputus'
+    : telemetryState === 'connecting'
+      ? 'Menghubungkan realtime'
+      : stale
+        ? 'Menunggu data terbaru'
+        : 'Telemetry terhubung';
 
   function parseRoute(): Route {
     const path = window.location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
@@ -117,32 +124,48 @@
     window.addEventListener('hashchange', applyRoute);
     if (!window.location.hash) window.location.hash = '#devices';
     else void applyRoute();
-    if (!auth) return;
-    unsubscribeAuth = onAuthStateChanged(auth, async (next) => {
-      clearTelemetry();
-      selectedId = '';
-      clearSecret();
-      user = next;
-      if (!next) {
-        devices = [];
-        return;
-      }
-      try {
-        await loadDevices();
-        await applyRoute();
-      } catch (error) {
-        message = error instanceof Error ? error.message : 'Gagal memuat perangkat.';
-      }
-    });
+    void restoreSession();
   });
 
   onDestroy(() => {
+    sessionVersion += 1;
     window.removeEventListener('hashchange', applyRoute);
-    unsubscribeAuth?.();
     if (staleTimer) clearInterval(staleTimer);
-    clearTelemetry();
-    clearSecret();
+    clearSessionState();
   });
+
+  function clearSessionState() {
+    clearTelemetry();
+    selectedId = '';
+    clearSecret();
+    devices = [];
+    user = null;
+    setCsrfToken(null);
+  }
+
+  function applyUnauthenticated(error?: unknown) {
+    sessionVersion += 1;
+    clearSessionState();
+    if (error instanceof ApiError && error.status === 401) message = '';
+    else if (error) message = error instanceof Error ? error.message : 'Sesi tidak dapat diperiksa.';
+  }
+
+  async function restoreSession() {
+    const version = ++sessionVersion;
+    sessionBusy = true;
+    message = '';
+    try {
+      const result = await api<{ user: AuthUser }>('/api/auth/session');
+      if (version !== sessionVersion) return;
+      user = result.user;
+      await loadDevices();
+      if (version === sessionVersion) await applyRoute();
+    } catch (error) {
+      if (version === sessionVersion) applyUnauthenticated(error);
+    } finally {
+      if (version === sessionVersion) sessionBusy = false;
+    }
+  }
 
   async function loadDevices() {
     devicesBusy = true;
@@ -150,6 +173,9 @@
       const result = await api<{ devices: Device[] }>('/api/devices');
       devices = result.devices;
       if (exportDeviceId && !devices.some((device) => device.id === exportDeviceId)) exportDeviceId = '';
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) applyUnauthenticated(error);
+      throw error;
     } finally {
       devicesBusy = false;
     }
@@ -159,6 +185,7 @@
     selectionVersion += 1;
     unsubscribeTelemetry?.();
     unsubscribeTelemetry = null;
+    telemetryState = 'connecting';
     chart?.destroy();
     chart = null;
     latest = null;
@@ -192,50 +219,72 @@
     if (page !== 'realtime') return;
 
     chartParameterIds = Object.keys(device.parameters);
-    if (!database) {
-      message = firebaseSetupError || 'Realtime Database tidak tersedia.';
-      return;
-    }
-    const latestRef = ref(database, `telemetry/${id}/latest`);
-    const historyRef = query(ref(database, `telemetry/${id}/history`), orderByChild('timestamp'), limitToLast(10));
-    const stopLatest = onValue(latestRef, (snapshot) => {
-      if (version === selectionVersion && id === selectedId && route.page === 'realtime') latest = snapshot.exists() ? snapshot.val() : null;
-    }, (error) => {
-      if (version === selectionVersion) message = `Telemetry realtime gagal: ${error.message}`;
+    const isCurrent = () => version === selectionVersion && id === selectedId && route.page === 'realtime';
+    const stop = connectTelemetryEvents(id, {
+      snapshot(snapshot) {
+        if (!isCurrent()) return;
+        history = snapshot.last10;
+        latest = snapshot.latest ?? history.at(-1) ?? null;
+        message = '';
+        setTimeout(() => { if (isCurrent()) renderChart(); }, 0);
+      },
+      telemetry(packet) {
+        if (!isCurrent()) return;
+        history = mergeTelemetrySamples(history, [packet], 10);
+        if (!latest || packet.timestamp >= latest.timestamp) latest = packet;
+        message = '';
+        setTimeout(() => { if (isCurrent()) renderChart(); }, 0);
+      },
+      state(state) {
+        if (!isCurrent()) return;
+        telemetryState = state;
+        if (state === 'open') message = '';
+        else if (state === 'error') message = 'Koneksi realtime terputus. Mencoba menghubungkan kembali…';
+      },
+      malformed() {
+        if (isCurrent()) message = 'Server mengirim data realtime yang tidak valid.';
+      }
     });
-    const stopHistory = onValue(historyRef, (snapshot) => {
-      if (version !== selectionVersion || id !== selectedId || route.page !== 'realtime') return;
-      history = lastTelemetrySamples(snapshot.val(), 10);
-      setTimeout(renderChart, 0);
-    }, (error) => {
-      if (version === selectionVersion) message = `Riwayat realtime gagal: ${error.message}`;
-    });
-    const stop = () => { stopLatest(); stopHistory(); };
-    if (version === selectionVersion && id === selectedId && route.page === 'realtime') unsubscribeTelemetry = stop;
+    if (isCurrent()) unsubscribeTelemetry = stop;
     else stop();
   }
 
   async function submitAuth() {
-    if (!auth) {
-      message = firebaseSetupError;
-      return;
-    }
+    const version = ++sessionVersion;
     authBusy = true;
     message = '';
     try {
-      await setPersistence(auth, browserLocalPersistence);
-      await signInWithEmailAndPassword(auth, email, password);
+      const result = await api<{ user: AuthUser; csrfToken: string }>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password })
+      });
+      if (version !== sessionVersion) return;
+      setCsrfToken(result.csrfToken);
+      user = result.user;
       password = '';
+      await loadDevices();
+      if (version === sessionVersion) await applyRoute();
     } catch (error) {
+      if (version !== sessionVersion) return;
+      clearSessionState();
       message = error instanceof Error ? error.message : 'Autentikasi gagal.';
     } finally {
-      authBusy = false;
+      if (version === sessionVersion) authBusy = false;
     }
   }
 
   async function logout() {
-    clearSecret();
-    if (auth) await signOut(auth);
+    ++sessionVersion;
+    authBusy = true;
+    message = '';
+    clearSessionState();
+    try {
+      await api<void>('/api/auth/logout', { method: 'POST' });
+    } catch (error) {
+      message = error instanceof Error ? error.message : 'Sesi lokal sudah ditutup, tetapi server gagal dijangkau.';
+    } finally {
+      authBusy = false;
+    }
   }
 
   function resetCreateForm() {
@@ -415,21 +464,24 @@
 
 <svelte:head><title>Kinan Works | Telemetry</title></svelte:head>
 
-{#if !user}
+{#if sessionBusy}
+  <main class="auth-shell" aria-busy="true">
+    <section class="auth-card"><div class="brand-mark">KW</div><div class="spinner"></div><p class="muted">Memeriksa sesi…</p></section>
+  </main>
+{:else if !user}
   <main class="auth-shell">
     <section class="auth-card" aria-labelledby="login-title">
       <div class="brand-mark">KW</div>
       <p class="eyebrow">KINAN WORKS</p>
       <h1 id="login-title">Telemetry, tanpa kerumitan.</h1>
       <p class="muted">Pantau perangkat dan data sensor dari satu ruang kerja yang tenang.</p>
-      {#if firebaseSetupError}<div class="callout danger" role="alert"><strong>Konfigurasi belum lengkap</strong><span>{firebaseSetupError} Isi variabel VITE_FIREBASE_* lalu muat ulang aplikasi.</span></div>{/if}
       <form onsubmit={(event) => { event.preventDefault(); void submitAuth(); }}>
-        <label>Email<input type="email" bind:value={email} required autocomplete="email" disabled={!auth || authBusy} /></label>
-        <label>Password<input type="password" bind:value={password} required minlength="6" autocomplete="current-password" disabled={!auth || authBusy} /></label>
-        <button type="submit" disabled={!auth || authBusy}>{authBusy ? 'Memeriksa…' : 'Masuk'}</button>
+        <label>Username<input type="text" bind:value={username} required autocomplete="username" disabled={authBusy} /></label>
+        <label>Password<input type="password" bind:value={password} required minlength="6" autocomplete="current-password" disabled={authBusy} /></label>
+        <button type="submit" disabled={authBusy}>{authBusy ? 'Memeriksa…' : 'Masuk'}</button>
       </form>
-      <p class="auth-note">Akun dikelola administrator melalui Firebase Console.</p>
-      {#if message && !firebaseSetupError}<p class="form-error" role="alert">{message}</p>{/if}
+      <p class="auth-note">Akun dikelola administrator server. Hubungi administrator jika Anda memerlukan akses.</p>
+      {#if message}<p class="form-error" role="alert">{message}</p>{/if}
     </section>
   </main>
 {:else}
@@ -446,7 +498,7 @@
           Exports
         </a>
       </nav>
-      <div class="sidebar-account"><span class="avatar">{(user.email || 'U').slice(0, 1).toUpperCase()}</span><span><strong>{user.email}</strong><button class="text-button" onclick={() => void logout()}>Keluar</button></span></div>
+      <div class="sidebar-account"><span class="avatar">{(user.username || 'U').slice(0, 1).toUpperCase()}</span><span><strong>{user.username}</strong><button class="text-button" onclick={() => void logout()}>Keluar</button></span></div>
     </aside>
 
     <main class="main-content">
@@ -495,7 +547,7 @@
           {:else if route.page === 'edit'}
             <section id="device-editor" class="panel editor-panel"><div class="panel-heading"><div><p class="eyebrow">SETTINGS</p><h2>Konfigurasi device</h2><p>ID parameter tetap; label, satuan, dan desimal dapat diedit.</p></div><button onclick={() => void saveDevice()} disabled={saveBusy}>{saveBusy ? 'Menyimpan…' : 'Simpan perubahan'}</button></div><label class="wide-field">Nama device<input bind:value={draftLabel} maxlength="100" disabled={saveBusy} /></label><div class="table-wrap"><div class="parameter-table table-head"><span>ID</span><span>Label</span><span>Satuan</span><span>Desimal</span><span></span></div>{#each draftParameters as parameter}<div class="parameter-table"><input aria-label="ID parameter" value={parameter.id} readonly /><input aria-label="Label parameter" bind:value={parameter.label} maxlength="100" disabled={saveBusy} /><input aria-label="Satuan parameter" bind:value={parameter.unit} maxlength="32" disabled={saveBusy} /><input aria-label="Desimal parameter" type="number" min="0" max="10" step="1" bind:value={parameter.points} disabled={saveBusy} /><button class="icon-button" aria-label={`Hapus ${parameter.label}`} onclick={() => removeParameter(parameter.id)} disabled={saveBusy || draftParameters.length === 1}>×</button></div>{/each}</div><button class="add-row" onclick={addParameter} disabled={saveBusy || draftParameters.length >= 100}>＋ Tambah parameter</button></section>
           {:else}
-            <section id="realtime-summary" class="summary-bar"><div><span class:offline={stale} class="live-dot"></span><span><strong>{stale ? 'Menunggu data terbaru' : 'Telemetry terhubung'}</strong><small>{latest ? `Pembaruan ${new Date(latest.timestamp).toLocaleString('id-ID')}` : 'Belum ada data'}</small></span></div><a href="#exports">Ekspor data →</a></section>
+            <section id="realtime-summary" class="summary-bar"><div><span class:offline={realtimeUnavailable} class="live-dot"></span><span><strong>{realtimeStatus}</strong><small>{latest ? `Pembaruan ${new Date(latest.timestamp).toLocaleString('id-ID')}` : 'Belum ada data'}</small></span></div><a href="#exports">Ekspor data →</a></section>
             <section id="latest-values" class="metric-grid" aria-label="Nilai parameter terbaru">{#each Object.values(selectedDevice.parameters) as parameter}<article class="metric-card"><div><span>{parameter.label}</span><small>{parameter.unit || 'Tanpa satuan'}</small></div>{#if readingValue(parameter.id) !== null}<strong>{formatReading(readingValue(parameter.id)!, parameter.points)}</strong>{:else}<strong>—</strong>{#if readingError(parameter.id)}<small class="reading-error">Error: {readingError(parameter.id)}</small>{:else}<small>Belum ada nilai</small>{/if}{/if}<time datetime={latest ? new Date(latest.timestamp).toISOString() : undefined}>{latest ? new Date(latest.timestamp).toLocaleString('id-ID') : 'Belum ada timestamp'}</time></article>{/each}</section>
             <section id="realtime-chart" class="panel chart-panel"><div class="panel-heading"><div><p class="eyebrow">LAST 10</p><h2>Riwayat telemetry realtime</h2><p>10 sampel history terakhir, berurutan berdasarkan timestamp. Data error tetap kosong.</p></div></div><fieldset class="parameter-selector"><legend>Parameter grafik</legend>{#each Object.values(selectedDevice.parameters) as parameter}<label><input type="checkbox" checked={chartParameterIds.includes(parameter.id)} onchange={() => toggleChartParameter(parameter.id)} />{parameter.label}</label>{/each}</fieldset><div class="chart"><canvas bind:this={chartCanvas}></canvas></div></section>
           {/if}
