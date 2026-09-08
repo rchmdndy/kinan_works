@@ -1,0 +1,16 @@
+{
+  "name": "kinan-works-simulator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "test": "bun test src/index.test.ts",
+    "build": "bun build src/index.ts --target bun --outdir dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
+  }
+}

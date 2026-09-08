@@ -1,0 +1,21 @@
+{
+  "name": "kinan-works",
+  "private": true,
+  "workspaces": ["api", "web", "simulator"],
+  "scripts": {
+    "dev": "bun run --cwd api dev & bun run --cwd web dev",
+    "build": "bun run --cwd api build && bun run --cwd web build && bun run --cwd simulator build",
+    "test": "bun test api/tests web/src/lib simulator/src/index.test.ts && bun run test:rules",
+    "test:rules": "firebase emulators:exec --only database --project demo-kinan-works --config firebase/firebase.json \"bun test firebase/rules.test.ts\"",
+    "typecheck": "bun run --cwd api typecheck && bun run --cwd web check && bun run --cwd simulator typecheck",
+    "migrate:sqlite": "bun --cwd api src/migrate-sqlite.ts",
+    "verify:sqlite": "bun --cwd api src/migrate-sqlite.ts --verify-only",
+    "prune:dry": "bun scripts/prune.ts",
+    "prune:apply": "bun scripts/prune.ts --apply"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "firebase": "^12.3.0",
+    "firebase-tools": "^14.13.1"
+  }
+}

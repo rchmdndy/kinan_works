@@ -1,0 +1,11 @@
+{
+  "description": "Manual Emulator Suite cases for firebase/database.rules.json",
+  "cases": [
+    { "name": "owner isolation", "expect": "owner A can read devices/A but not devices/B or telemetry/B" },
+    { "name": "device isolation", "expect": "device A token can write telemetry/A only; device B and owner paths denied" },
+    { "name": "inactive and old version", "expect": "writes denied when backend/deviceAccess active=false or token credentialVersion differs" },
+    { "name": "malformed payload", "expect": "missing timestamp/values, unknown parameter, invalid status, non-number value denied" },
+    { "name": "partial writes and deletes", "expect": "partial latest/history writes and deletes denied by .validate and .write" }
+  ],
+  "note": "This manifest is a test contract, not a Firebase CLI deployment config. Run cases against the Firebase Emulator Suite after supplying auth/database emulator setup."
+}
