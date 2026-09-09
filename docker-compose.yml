@@ -1,16 +1,16 @@
 services:
   redis:
     image: redis:7.4-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
-    expose: ["6379"]
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    expose: ['6379']
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
       timeout: 3s
       retries: 10
   mosquitto:
     image: eclipse-mosquitto:2.0.21
-    entrypoint: ["/mosquitto/config/entrypoint.sh"]
+    entrypoint: ['/mosquitto/config/entrypoint.sh']
     environment:
       MQTT_INGEST_USERNAME: ${MQTT_INGEST_USERNAME:-kinan-api}
       MQTT_INGEST_PASSWORD: ${MQTT_INGEST_PASSWORD:-REPLACE_WITH_LONG_RANDOM_PASSWORD}
@@ -19,12 +19,12 @@ services:
       - ./mosquitto/entrypoint.sh:/mosquitto/config/entrypoint.sh:ro
       - ./data/mosquitto:/mosquitto/auth
       - mosquitto-data:/mosquitto/data
-    ports: ["127.0.0.1:1883:1883"]
+    ports: ['127.0.0.1:1883:1883']
   api:
     build: { context: ., dockerfile: api/Dockerfile }
-    ports: ["127.0.0.1:3000:3000"]
-    user: "0:0"
-    volumes: ["./data:/data", "./data/mosquitto:/mosquitto-auth"]
+    ports: ['127.0.0.1:3000:3000']
+    user: '0:0'
+    volumes: ['./data:/data', './data/mosquitto:/mosquitto-auth']
     env_file: .env
     environment:
       SQLITE_PATH: /data/kinan.sqlite
@@ -32,12 +32,14 @@ services:
       MQTT_URL: mqtt://mosquitto:1883
       MOSQUITTO_PASSWORD_FILE: /mosquitto-auth/passwd
       MOSQUITTO_ACL_FILE: /mosquitto-auth/acl
+      # localhost is canonical; permit 127.0.0.1 only as an explicit local alias.
+      LOCAL_APP_ORIGINS: ${LOCAL_APP_ORIGINS:-http://127.0.0.1:5173}
     depends_on:
       redis: { condition: service_healthy }
       mosquitto: { condition: service_started }
   web:
     build: { context: ., dockerfile: web/Dockerfile }
-    ports: ["127.0.0.1:5173:8080"]
+    ports: ['127.0.0.1:5173:8080']
     depends_on: [api]
 volumes:
   mosquitto-data:

@@ -55,9 +55,17 @@ Validate local sources with:
 
 ```sh
 bun install --frozen-lockfile
+bun run format:check
+bun run lint
 bun run typecheck
 bun run build
 bun run test
 ```
 
 Production API and web images can be built with their Dockerfiles. Mount a persistent `/data` directory for SQLite and Mosquitto auth files; do not put `.env`, the encryption key, or device secrets into images or source control.
+
+## Code style
+
+ESLint checks TypeScript and Svelte source with the recommended TypeScript and Svelte rules. Prettier uses two spaces and single quotes, including Svelte files. Run `bun run format` to update handwritten source, or `bun run format:check` to verify it without changes. The tooling ignores dependencies, generated output, local data, credential/configuration directories, logs, and legacy Firebase material because these files are not application source and may contain local secrets.
+
+`bun run lint` reports correctness issues. Fix the reported source rather than disabling rules broadly.

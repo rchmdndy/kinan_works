@@ -1,19 +1,19 @@
 services:
   redis:
     image: redis:7.4-alpine
-    ports: ["127.0.0.1:${TEST_REDIS_PORT}:6379"]
+    ports: ['127.0.0.1:${TEST_REDIS_PORT}:6379']
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 2s
       timeout: 2s
       retries: 15
   mosquitto:
     image: eclipse-mosquitto:2.0.21
-    entrypoint: ["/bin/sh", "/mosquitto/config/entrypoint.sh"]
+    entrypoint: ['/bin/sh', '/mosquitto/config/entrypoint.sh']
     environment:
       MQTT_INGEST_USERNAME: kinan-api
       MQTT_INGEST_PASSWORD: ${MQTT_INGEST_PASSWORD}
-    ports: ["127.0.0.1:${TEST_MQTT_PORT}:1883"]
+    ports: ['127.0.0.1:${TEST_MQTT_PORT}:1883']
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/entrypoint.sh:/mosquitto/config/entrypoint.sh:ro
