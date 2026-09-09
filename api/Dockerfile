@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
 
 FROM dependencies AS build
 COPY api api
-RUN bun run --cwd api build
+RUN bun build api/src/index.ts api/src/seed.ts --target bun --outdir api/dist
 
 FROM oven/bun:1.3.14-alpine AS runtime
 ENV NODE_ENV=production \
