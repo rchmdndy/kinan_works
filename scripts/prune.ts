@@ -1,4 +1,27 @@
 import { loadConfig } from '../api/src/config.js';
 import { openDatabase, Repository } from '../api/src/repository.js';
-const config = loadConfig(); const dryRun = !process.argv.includes('--apply'); const deviceId = process.argv.find((value) => value.startsWith('--device='))?.slice('--device='.length); const repository = new Repository(openDatabase(config.SQLITE_PATH));
-try { const cutoff = Date.now() - config.RETENTION_DAYS * 86_400_000; const devices = deviceId ? [deviceId] : repository.listAllDevices().map((device) => device.id); const count = devices.reduce((sum, id) => sum + (dryRun ? repository.getHistory(id, 0, cutoff, 10_000_000).length : repository.pruneTelemetry(cutoff, id)), 0); console.log(JSON.stringify({ dryRun, cutoff, devices: devices.length, count })); } finally { repository.close(); }
+const config = loadConfig();
+const dryRun = !process.argv.includes('--apply');
+const deviceId = process.argv
+  .find((value) => value.startsWith('--device='))
+  ?.slice('--device='.length);
+const repository = new Repository(openDatabase(config.SQLITE_PATH));
+try {
+  const cutoff = Date.now() - config.RETENTION_DAYS * 86_400_000;
+  const devices = deviceId
+    ? [deviceId]
+    : repository.listAllDevices().map((device) => device.id);
+  const count = devices.reduce(
+    (sum, id) =>
+      sum +
+      (dryRun
+        ? repository.getHistory(id, 0, cutoff, 10_000_000).length
+        : repository.pruneTelemetry(cutoff, id)),
+    0,
+  );
+  console.log(
+    JSON.stringify({ dryRun, cutoff, devices: devices.length, count }),
+  );
+} finally {
+  repository.close();
+}
