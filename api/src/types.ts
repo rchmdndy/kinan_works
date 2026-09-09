@@ -32,7 +32,19 @@ export type EncryptedSecret = {
 };
 
 export type TelemetryPacket = {
-  timestamp: number | { '.sv': 'timestamp' };
+  timestamp: number;
   writeId: string;
+  credentialVersion: number;
   values: Record<string, SensorValue>;
 };
+
+export type LocalUser = {
+  id: string;
+  username: string;
+  displayName: string;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SessionUser = Pick<LocalUser, 'id' | 'username' | 'displayName'>;

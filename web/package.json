@@ -9,8 +9,10 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "bits-ui": "^2.19.1",
     "chart.js": "^4.5.0",
-    "firebase": "^12.3.0",
     "file-saver": "^2.0.5",
     "svelte": "^5.38.7",
     "xlsx": "^0.18.5"
