@@ -87,8 +87,15 @@
         sesuai perangkat ini. Secret hanya tampil setelah Anda tampilkan.
       </p>
     </div>
-    <button class="button secondary" onclick={() => void revealSecret()} disabled={secretBusy}
-      >{secretBusy ? 'Memuat…' : secret ? 'Sembunyikan secret' : 'Tampilkan secret'}</button
+    <button
+      class="button secondary"
+      onclick={() => void revealSecret()}
+      disabled={secretBusy}
+      >{secretBusy
+        ? 'Memuat…'
+        : secret
+          ? 'Sembunyikan secret'
+          : 'Tampilkan secret'}</button
     >
   </div>
 
@@ -129,4 +136,3 @@
 </section>
 
 {#if message}<p class="toast error" role="alert">{message}</p>{/if}
-

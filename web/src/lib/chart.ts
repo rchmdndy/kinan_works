@@ -1,10 +1,7 @@
 import { Chart, type ChartConfiguration } from 'chart.js/auto';
 import type { Device, TelemetryPacket } from './types';
 
-function sampleData(
-  samples: TelemetryPacket[],
-  id: string,
-): (number | null)[] {
+function sampleData(samples: TelemetryPacket[], id: string): (number | null)[] {
   return samples.map((sample) =>
     sample.values[id]?.status === 'ok' ? sample.values[id].value : null,
   );

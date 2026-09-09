@@ -23,9 +23,7 @@
     <div class="brand-mark">KW</div>
     <p class="auth-rule">KINAN WORKS</p>
     <h1 id="login-title">Telemetry console</h1>
-    <p class="muted">
-      Masuk untuk memantau perangkat dan data sensor.
-    </p>
+    <p class="muted">Masuk untuk memantau perangkat dan data sensor.</p>
     <form onsubmit={submit}>
       <label
         >Username<input

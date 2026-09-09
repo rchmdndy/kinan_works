@@ -35,7 +35,8 @@ function parameterDocs(device: Device): string {
 
 function exampleData(device: Device): string {
   const parameters = Object.values(device.parameters);
-  const ids = parameters.length > 0 ? parameters.map((p) => p.id) : ['parameter_1'];
+  const ids =
+    parameters.length > 0 ? parameters.map((p) => p.id) : ['parameter_1'];
   const values = ids.map((_, index) => String(20 + index * 10)).join(', ');
   return `{\n    "data": [\n        ${values}\n    ]\n}`;
 }
@@ -52,7 +53,9 @@ export function firmwareSnippet(
   const valuesExample =
     parameters.length > 0
       ? parameters
-          .map((parameter) => `"${parameter.id}": { "status": "ok", "value": 65 }`)
+          .map(
+            (parameter) => `"${parameter.id}": { "status": "ok", "value": 65 }`,
+          )
           .join(',\n        ')
       : '"parameter_1": { "status": "ok", "value": 65 }';
 

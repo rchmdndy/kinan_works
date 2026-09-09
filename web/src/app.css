@@ -110,7 +110,9 @@ button,
   line-height: 1;
   text-decoration: none;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 button:hover:not(:disabled),
 .button:hover {
@@ -309,7 +311,9 @@ fieldset {
   font-size: 0.87rem;
   font-weight: 500;
   text-decoration: none;
-  transition: color 0.15s ease, background 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
 }
 .sidebar nav a:hover {
   color: white;
@@ -451,7 +455,9 @@ fieldset {
   font-weight: 500;
   cursor: pointer;
   justify-content: start;
-  transition: color 0.15s ease, background 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
 }
 .device-tabs-trigger:hover:not(:disabled) {
   color: var(--blue-dark);
@@ -527,7 +533,9 @@ fieldset {
   padding: 20px;
   background: var(--panel);
   text-decoration: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .device-card:hover {
   border-color: #b6c8e4;
@@ -990,7 +998,8 @@ fieldset {
   min-width: 720px;
   display: grid;
   grid-template-columns:
-    minmax(180px, 1.35fr) minmax(150px, 1.1fr) minmax(90px, 0.7fr) 85px 38px;
+    minmax(180px, 1.35fr) minmax(150px, 1.1fr) minmax(90px, 0.7fr)
+    85px 38px;
   align-items: start;
   gap: 9px;
   border-bottom: 1px solid var(--line-soft);
@@ -1073,7 +1082,9 @@ fieldset {
   padding: 11px 12px;
   background: var(--panel-soft);
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 .option-label:hover {
   border-color: #b6c8e4;
@@ -1241,7 +1252,9 @@ fieldset {
   padding: 2px;
   background: var(--panel-soft);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 .switch-label {
   display: inline-flex;

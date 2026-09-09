@@ -131,8 +131,12 @@
               disabled={busy}
             >
               <Select.Trigger class="select-trigger">
-                <Select.Value placeholder="Pilih device">{selectedLabel}</Select.Value>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                <Select.Value placeholder="Pilih device"
+                  >{selectedLabel}</Select.Value
+                >
+                <svg viewBox="0 0 24 24" aria-hidden="true"
+                  ><path d="M6 9l6 6 6-6"></path></svg
+                >
               </Select.Trigger>
               <Select.Portal>
                 <Select.Content class="select-content">
@@ -141,8 +145,8 @@
                       <Select.Item
                         value={option.value}
                         label={option.label}
-                        class="select-item"
-                      >{option.label}</Select.Item>
+                        class="select-item">{option.label}</Select.Item
+                      >
                     {/each}
                   </Select.Viewport>
                 </Select.Content>
@@ -170,7 +174,8 @@
           <div class="section-heading">
             <h2>Parameter yang disertakan</h2>
             <p>
-              {parameterIds.length} dari {Object.keys(device()!.parameters).length}
+              {parameterIds.length} dari {Object.keys(device()!.parameters)
+                .length}
               parameter dipilih.
             </p>
           </div>
@@ -185,13 +190,28 @@
                 >
                   {#snippet children({ checked })}
                     {#if checked}
-                      <svg class="checkbox-indicator" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6l2.5 2.5L10 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                      <svg
+                        class="checkbox-indicator"
+                        viewBox="0 0 12 12"
+                        aria-hidden="true"
+                        ><path
+                          d="M2 6l2.5 2.5L10 3"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        ></path></svg
+                      >
                     {/if}
                   {/snippet}
                 </Checkbox.Root>
                 <span>
                   <strong>{parameter.label}</strong>
-                  <small>{parameter.id} · {parameter.unit || 'tanpa satuan'} · {parameter.points} desimal</small>
+                  <small
+                    >{parameter.id} · {parameter.unit || 'tanpa satuan'} · {parameter.points}
+                    desimal</small
+                  >
                 </span>
               </label>
             {/each}
@@ -204,8 +224,9 @@
           ></path></svg
         >
         <p>
-          File memuat sheet <strong>Data</strong> dan <strong>Informasi</strong>.
-          Metadata terbaru diterapkan tanpa mengonversi nilai histori.
+          File memuat sheet <strong>Data</strong> dan
+          <strong>Informasi</strong>. Metadata terbaru diterapkan tanpa
+          mengonversi nilai histori.
         </p>
       </div>
     </div>
