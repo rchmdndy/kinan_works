@@ -1,41 +1,16 @@
 import { Database as SqliteDatabase } from 'bun:sqlite';
+import { and, asc, desc, eq, gte, gt, lt, lte, sql } from 'drizzle-orm';
+import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import * as schema from './schema.js';
 import type { Device, EncryptedSecret, LocalUser, Parameter, SensorValue, SessionUser, TelemetryPacket } from './types.js';
 
 const CURRENT_SCHEMA_VERSION = 3;
-const rowColumns = 'id, owner_uid, label, active, credential_version, created_at, updated_at, parameters_json, secret_iv, secret_ciphertext';
-
-type StoredDevice = {
-  id: string;
-  owner_uid: string;
-  label: string;
-  active: number;
-  credential_version: number;
-  created_at: number;
-  updated_at: number;
-  parameters_json: string;
-  secret_iv: string;
-  secret_ciphertext: string;
-};
-
-type StoredUser = {
-  id: string;
-  username: string;
-  display_name: string;
-  password_hash: string;
-  active: number;
-  created_at: number;
-  updated_at: number;
-};
-
-type StoredTelemetry = {
-  device_id: string;
-  write_id: string;
-  timestamp: number;
-  credential_version: number;
-  values_json: string;
-};
+type DrizzleDatabase = BunSQLiteDatabase<typeof schema>;
+type StoredDevice = typeof schema.devices.$inferSelect;
+type StoredUser = typeof schema.users.$inferSelect;
+type StoredTelemetry = typeof schema.telemetry.$inferSelect;
 
 export type LegacyMetadataImport = {
   devices: Record<string, Device>;
@@ -62,24 +37,15 @@ export function backupDatabase(path: string): string | null {
   return backupPath;
 }
 
+// Existing deployments are versioned by PRAGMA user_version. These DDL migrations
+// intentionally remain authoritative; Drizzle is used for application queries and
+// must never schema-push a populated database.
 function migrate(sqlite: SqliteDatabase): void {
   let version = databaseVersion(sqlite);
   if (version > CURRENT_SCHEMA_VERSION) throw new Error(`SQLite schema version ${version} is newer than supported version ${CURRENT_SCHEMA_VERSION}`);
-
   if (version < 1) {
     sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS devices (
-        id TEXT PRIMARY KEY,
-        owner_uid TEXT NOT NULL,
-        label TEXT NOT NULL,
-        active INTEGER NOT NULL CHECK (active IN (0, 1)),
-        credential_version INTEGER NOT NULL CHECK (credential_version > 0),
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        parameters_json TEXT NOT NULL,
-        secret_iv TEXT NOT NULL,
-        secret_ciphertext TEXT NOT NULL
-      );
+      CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, owner_uid TEXT NOT NULL, label TEXT NOT NULL, active INTEGER NOT NULL CHECK (active IN (0, 1)), credential_version INTEGER NOT NULL CHECK (credential_version > 0), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, parameters_json TEXT NOT NULL, secret_iv TEXT NOT NULL, secret_ciphertext TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS devices_owner_uid ON devices(owner_uid);
       CREATE TABLE IF NOT EXISTS app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       PRAGMA user_version = 1;
@@ -88,57 +54,20 @@ function migrate(sqlite: SqliteDatabase): void {
   }
   if (version < 2) {
     sqlite.exec(`
-      CREATE TABLE users (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL COLLATE NOCASE UNIQUE,
-        display_name TEXT NOT NULL,
-        password_hash TEXT NOT NULL,
-        active INTEGER NOT NULL CHECK (active IN (0, 1)),
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE sessions (
-        id_hash TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        csrf_hash TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL,
-        last_seen_at INTEGER NOT NULL
-      );
-      CREATE INDEX sessions_user_id ON sessions(user_id);
-      CREATE INDEX sessions_expires_at ON sessions(expires_at);
-      CREATE TABLE owner_links (
-        legacy_uid TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        linked_at INTEGER NOT NULL
-      );
+      CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL COLLATE NOCASE UNIQUE, display_name TEXT NOT NULL, password_hash TEXT NOT NULL, active INTEGER NOT NULL CHECK (active IN (0, 1)), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE sessions (id_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, csrf_hash TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL);
+      CREATE INDEX sessions_user_id ON sessions(user_id); CREATE INDEX sessions_expires_at ON sessions(expires_at);
+      CREATE TABLE owner_links (legacy_uid TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, linked_at INTEGER NOT NULL);
       PRAGMA user_version = 2;
     `);
     version = 2;
   }
-  if (version < 3) {
-    sqlite.exec(`
-      CREATE TABLE telemetry (
-        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-        write_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        credential_version INTEGER NOT NULL,
-        values_json TEXT NOT NULL,
-        received_at INTEGER NOT NULL,
-        PRIMARY KEY (device_id, write_id)
-      );
-      CREATE INDEX telemetry_device_time ON telemetry(device_id, timestamp DESC, write_id DESC);
-      CREATE TABLE telemetry_latest (
-        device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
-        write_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        credential_version INTEGER NOT NULL,
-        values_json TEXT NOT NULL,
-        received_at INTEGER NOT NULL
-      );
-      PRAGMA user_version = 3;
-    `);
-  }
+  if (version < 3) sqlite.exec(`
+    CREATE TABLE telemetry (device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE, write_id TEXT NOT NULL, timestamp INTEGER NOT NULL, credential_version INTEGER NOT NULL, values_json TEXT NOT NULL, received_at INTEGER NOT NULL, PRIMARY KEY (device_id, write_id));
+    CREATE INDEX telemetry_device_time ON telemetry(device_id, timestamp DESC, write_id DESC);
+    CREATE TABLE telemetry_latest (device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, write_id TEXT NOT NULL, timestamp INTEGER NOT NULL, credential_version INTEGER NOT NULL, values_json TEXT NOT NULL, received_at INTEGER NOT NULL);
+    PRAGMA user_version = 3;
+  `);
 }
 
 export function openDatabase(path: string, options: { migrate?: boolean; backup?: boolean } = {}): SqliteDatabase {
@@ -161,146 +90,77 @@ export function assertMetadataMigrated(sqlite: SqliteDatabase): void {
   if (databaseVersion(sqlite) < CURRENT_SCHEMA_VERSION) throw new Error('SQLite database migrations are incomplete');
 }
 
-function deviceToRow(device: Device, secret: EncryptedSecret): StoredDevice {
-  return { id: device.id, owner_uid: device.ownerUid, label: device.label, active: device.active ? 1 : 0, credential_version: device.credentialVersion, created_at: device.createdAt, updated_at: device.updatedAt, parameters_json: stableJson(device.parameters), secret_iv: secret.iv, secret_ciphertext: secret.ciphertext };
+function deviceToRow(device: Device, secret: EncryptedSecret): typeof schema.devices.$inferInsert {
+  return { id: device.id, ownerUid: device.ownerUid, label: device.label, active: device.active ? 1 : 0, credentialVersion: device.credentialVersion, createdAt: device.createdAt, updatedAt: device.updatedAt, parameters: device.parameters, secretIv: secret.iv, secretCiphertext: secret.ciphertext };
 }
-
-function rowToDevice(row: StoredDevice): Device {
-  return { id: row.id, ownerUid: row.owner_uid, label: row.label, active: row.active === 1, credentialVersion: row.credential_version, createdAt: row.created_at, updatedAt: row.updated_at, parameters: JSON.parse(row.parameters_json) as Record<string, Parameter> };
-}
-
-function rowToPacket(row: StoredTelemetry): TelemetryPacket {
-  return { timestamp: row.timestamp, writeId: row.write_id, credentialVersion: row.credential_version, values: JSON.parse(row.values_json) as Record<string, SensorValue> };
-}
-
-function publicUser(row: StoredUser): LocalUser {
-  return { id: row.id, username: row.username, displayName: row.display_name, active: row.active === 1, createdAt: row.created_at, updatedAt: row.updated_at };
-}
+function rowToDevice(row: StoredDevice): Device { return { id: row.id, ownerUid: row.ownerUid, label: row.label, active: row.active === 1, credentialVersion: row.credentialVersion, createdAt: row.createdAt, updatedAt: row.updatedAt, parameters: row.parameters }; }
+function rowToPacket(row: StoredTelemetry | typeof schema.telemetryLatest.$inferSelect): TelemetryPacket { return { timestamp: row.timestamp, writeId: row.writeId, credentialVersion: row.credentialVersion, values: row.values }; }
+function publicUser(row: StoredUser): LocalUser { return { id: row.id, username: row.username, displayName: row.displayName, active: row.active === 1, createdAt: row.createdAt, updatedAt: row.updatedAt }; }
 
 export class Repository {
-  constructor(private readonly sqlite: SqliteDatabase) {}
+  private readonly db: DrizzleDatabase;
+  private readonly getDeviceStatement;
+  private readonly listDevicesStatement;
+  private readonly getSecretStatement;
+  private readonly insertTelemetryStatement;
+  private readonly getTelemetryLatestStatement;
+  private readonly upsertTelemetryLatestStatement;
+
+  constructor(private readonly sqlite: SqliteDatabase) {
+    this.db = drizzle({ client: sqlite, schema });
+    this.getDeviceStatement = this.db.select().from(schema.devices).where(eq(schema.devices.id, sql.placeholder('id'))).prepare();
+    this.listDevicesStatement = this.db.select().from(schema.devices).where(eq(schema.devices.ownerUid, sql.placeholder('ownerUid'))).orderBy(asc(schema.devices.createdAt), asc(schema.devices.id)).prepare();
+    this.getSecretStatement = this.db.select({ iv: schema.devices.secretIv, ciphertext: schema.devices.secretCiphertext }).from(schema.devices).where(eq(schema.devices.id, sql.placeholder('id'))).prepare();
+    this.insertTelemetryStatement = this.db.insert(schema.telemetry).values({ deviceId: sql.placeholder('deviceId'), writeId: sql.placeholder('writeId'), timestamp: sql.placeholder('timestamp'), credentialVersion: sql.placeholder('credentialVersion'), values: sql.placeholder('values'), receivedAt: sql.placeholder('receivedAt') }).onConflictDoNothing().returning({ deviceId: schema.telemetry.deviceId }).prepare();
+    this.getTelemetryLatestStatement = this.db.select({ timestamp: schema.telemetryLatest.timestamp, writeId: schema.telemetryLatest.writeId }).from(schema.telemetryLatest).where(eq(schema.telemetryLatest.deviceId, sql.placeholder('deviceId'))).prepare();
+    this.upsertTelemetryLatestStatement = this.db.insert(schema.telemetryLatest).values({ deviceId: sql.placeholder('deviceId'), writeId: sql.placeholder('writeId'), timestamp: sql.placeholder('timestamp'), credentialVersion: sql.placeholder('credentialVersion'), values: sql.placeholder('values'), receivedAt: sql.placeholder('receivedAt') }).onConflictDoUpdate({ target: schema.telemetryLatest.deviceId, set: { writeId: sql`excluded.write_id`, timestamp: sql`excluded.timestamp`, credentialVersion: sql`excluded.credential_version`, values: sql`excluded.values_json`, receivedAt: sql`excluded.received_at` } }).prepare();
+  }
 
   close(): void { this.sqlite.close(); }
-
-  getDevice(deviceId: string): Device | null {
-    const row = this.sqlite.query(`SELECT ${rowColumns} FROM devices WHERE id = ?`).get(deviceId) as StoredDevice | null;
-    return row ? rowToDevice(row) : null;
-  }
-
-  listDevices(ownerUid: string): Device[] {
-    return (this.sqlite.query(`SELECT ${rowColumns} FROM devices WHERE owner_uid = ? ORDER BY created_at, id`).all(ownerUid) as StoredDevice[]).map(rowToDevice);
-  }
-
-  listAllDevices(): Device[] {
-    return (this.sqlite.query(`SELECT ${rowColumns} FROM devices ORDER BY id`).all() as StoredDevice[]).map(rowToDevice);
-  }
-
-  getEncryptedSecret(deviceId: string): EncryptedSecret | null {
-    const row = this.sqlite.query('SELECT secret_iv, secret_ciphertext FROM devices WHERE id = ?').get(deviceId) as Pick<StoredDevice, 'secret_iv' | 'secret_ciphertext'> | null;
-    return row ? { iv: row.secret_iv, ciphertext: row.secret_ciphertext } : null;
-  }
+  getDevice(deviceId: string): Device | null { const row = this.getDeviceStatement.get({ id: deviceId }); return row ? rowToDevice(row) : null; }
+  listDevices(ownerUid: string): Device[] { return this.listDevicesStatement.all({ ownerUid }).map(rowToDevice); }
+  listAllDevices(): Device[] { return this.db.select().from(schema.devices).orderBy(asc(schema.devices.id)).all().map(rowToDevice); }
+  getEncryptedSecret(deviceId: string): EncryptedSecret | null { return this.getSecretStatement.get({ id: deviceId }) ?? null; }
 
   private writeDevice(device: Device, secret: EncryptedSecret): void {
     const row = deviceToRow(device, secret);
-    this.sqlite.query(`INSERT INTO devices (${rowColumns}) VALUES ($id,$owner_uid,$label,$active,$credential_version,$created_at,$updated_at,$parameters_json,$secret_iv,$secret_ciphertext)
-      ON CONFLICT(id) DO UPDATE SET owner_uid=$owner_uid,label=$label,active=$active,credential_version=$credential_version,created_at=$created_at,updated_at=$updated_at,parameters_json=$parameters_json,secret_iv=$secret_iv,secret_ciphertext=$secret_ciphertext`).run(row);
+    this.db.insert(schema.devices).values(row).onConflictDoUpdate({ target: schema.devices.id, set: { ownerUid: row.ownerUid, label: row.label, active: row.active, credentialVersion: row.credentialVersion, createdAt: row.createdAt, updatedAt: row.updatedAt, parameters: row.parameters, secretIv: row.secretIv, secretCiphertext: row.secretCiphertext } }).run();
   }
-
-  saveDeviceBundle(device: Device, secret: EncryptedSecret): void {
-    if (this.getDevice(device.id)) throw new Error(`Device ${device.id} already exists`);
-    this.writeDevice(device, secret);
-  }
-
-  updateDevice(deviceId: string, patch: Partial<Device>, secret?: EncryptedSecret): Device {
-    const current = this.getDevice(deviceId);
-    if (!current) throw new Error(`Device ${deviceId} not found`);
-    const encrypted = secret ?? this.getEncryptedSecret(deviceId);
-    if (!encrypted) throw new Error(`Device secret unavailable for ${deviceId}`);
-    const updated = { ...current, ...patch };
-    this.writeDevice(updated, encrypted);
-    return updated;
-  }
-
-  deleteDevice(deviceId: string): void { this.sqlite.query('DELETE FROM devices WHERE id = ?').run(deviceId); }
+  saveDeviceBundle(device: Device, secret: EncryptedSecret): void { if (this.getDevice(device.id)) throw new Error(`Device ${device.id} already exists`); this.writeDevice(device, secret); }
+  updateDevice(deviceId: string, patch: Partial<Device>, secret?: EncryptedSecret): Device { const current = this.getDevice(deviceId); if (!current) throw new Error(`Device ${deviceId} not found`); const encrypted = secret ?? this.getEncryptedSecret(deviceId); if (!encrypted) throw new Error(`Device secret unavailable for ${deviceId}`); const updated = { ...current, ...patch }; this.writeDevice(updated, encrypted); return updated; }
+  deleteDevice(deviceId: string): void { this.db.delete(schema.devices).where(eq(schema.devices.id, deviceId)).run(); }
 
   saveTelemetry(deviceId: string, packet: TelemetryPacket, receivedAt = Date.now()): { inserted: boolean; latestChanged: boolean } {
-    const execute = this.sqlite.transaction(() => {
-      const valuesJson = stableJson(packet.values);
-      const insert = this.sqlite.query('INSERT OR IGNORE INTO telemetry (device_id,write_id,timestamp,credential_version,values_json,received_at) VALUES (?,?,?,?,?,?)').run(deviceId, packet.writeId, packet.timestamp, packet.credentialVersion, valuesJson, receivedAt);
-      if (insert.changes === 0) return { inserted: false, latestChanged: false };
-      const latest = this.sqlite.query('SELECT timestamp, write_id FROM telemetry_latest WHERE device_id = ?').get(deviceId) as { timestamp: number; write_id: string } | null;
-      const latestChanged = !latest || packet.timestamp > latest.timestamp || (packet.timestamp === latest.timestamp && packet.writeId > latest.write_id);
-      if (latestChanged) this.sqlite.query(`INSERT INTO telemetry_latest (device_id,write_id,timestamp,credential_version,values_json,received_at) VALUES (?,?,?,?,?,?)
-        ON CONFLICT(device_id) DO UPDATE SET write_id=excluded.write_id,timestamp=excluded.timestamp,credential_version=excluded.credential_version,values_json=excluded.values_json,received_at=excluded.received_at`).run(deviceId, packet.writeId, packet.timestamp, packet.credentialVersion, valuesJson, receivedAt);
+    return this.db.transaction(() => {
+      const values = packet.values;
+      const insert = this.insertTelemetryStatement.all({ deviceId, writeId: packet.writeId, timestamp: packet.timestamp, credentialVersion: packet.credentialVersion, values, receivedAt });
+      if (insert.length === 0) return { inserted: false, latestChanged: false };
+      const latest = this.getTelemetryLatestStatement.get({ deviceId });
+      const latestChanged = !latest || packet.timestamp > latest.timestamp || (packet.timestamp === latest.timestamp && packet.writeId > latest.writeId);
+      if (latestChanged) this.upsertTelemetryLatestStatement.run({ deviceId, writeId: packet.writeId, timestamp: packet.timestamp, credentialVersion: packet.credentialVersion, values, receivedAt });
       return { inserted: true, latestChanged };
     });
-    return execute();
   }
+  getLatest(deviceId: string): TelemetryPacket | null { const row = this.db.select().from(schema.telemetryLatest).where(eq(schema.telemetryLatest.deviceId, deviceId)).get(); return row ? rowToPacket(row) : null; }
+  getRecent(deviceId: string, limit = 10): TelemetryPacket[] { return this.db.select().from(schema.telemetry).where(eq(schema.telemetry.deviceId, deviceId)).orderBy(desc(schema.telemetry.timestamp), desc(schema.telemetry.writeId)).limit(limit).all().reverse().map(rowToPacket); }
+  getHistory(deviceId: string, start: number, end: number, limit: number): TelemetryPacket[] { return this.db.select().from(schema.telemetry).where(and(eq(schema.telemetry.deviceId, deviceId), gte(schema.telemetry.timestamp, start), lt(schema.telemetry.timestamp, end))).orderBy(desc(schema.telemetry.timestamp), desc(schema.telemetry.writeId)).limit(limit).all().reverse().map(rowToPacket); }
+  pruneTelemetry(cutoff: number, deviceId?: string): number { return this.db.transaction(() => this.db.delete(schema.telemetry).where(deviceId ? and(eq(schema.telemetry.deviceId, deviceId), lt(schema.telemetry.timestamp, cutoff)) : lt(schema.telemetry.timestamp, cutoff)).returning({ deviceId: schema.telemetry.deviceId }).all().length); }
 
-  getLatest(deviceId: string): TelemetryPacket | null {
-    const row = this.sqlite.query('SELECT device_id,write_id,timestamp,credential_version,values_json FROM telemetry_latest WHERE device_id = ?').get(deviceId) as StoredTelemetry | null;
-    return row ? rowToPacket(row) : null;
-  }
-
-  getRecent(deviceId: string, limit = 10): TelemetryPacket[] {
-    const rows = this.sqlite.query('SELECT device_id,write_id,timestamp,credential_version,values_json FROM telemetry WHERE device_id = ? ORDER BY timestamp DESC, write_id DESC LIMIT ?').all(deviceId, limit) as StoredTelemetry[];
-    return rows.reverse().map(rowToPacket);
-  }
-
-  getHistory(deviceId: string, start: number, end: number, limit: number): TelemetryPacket[] {
-    const rows = this.sqlite.query('SELECT device_id,write_id,timestamp,credential_version,values_json FROM telemetry WHERE device_id = ? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp DESC, write_id DESC LIMIT ?').all(deviceId, start, end, limit) as StoredTelemetry[];
-    return rows.reverse().map(rowToPacket);
-  }
-
-  pruneTelemetry(cutoff: number, deviceId?: string): number {
-    const execute = this.sqlite.transaction(() => {
-      const result = deviceId ? this.sqlite.query('DELETE FROM telemetry WHERE device_id = ? AND timestamp < ?').run(deviceId, cutoff) : this.sqlite.query('DELETE FROM telemetry WHERE timestamp < ?').run(cutoff);
-      return Number(result.changes);
-    });
-    return execute();
-  }
-
-  createUser(user: LocalUser, passwordHash: string): void {
-    this.sqlite.query('INSERT INTO users (id,username,display_name,password_hash,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(user.id, user.username, user.displayName, passwordHash, user.active ? 1 : 0, user.createdAt, user.updatedAt);
-  }
-
-  getUserByUsername(username: string): (LocalUser & { passwordHash: string }) | null {
-    const row = this.sqlite.query('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username) as StoredUser | null;
-    return row ? { ...publicUser(row), passwordHash: row.password_hash } : null;
-  }
-
-  getUserById(id: string): LocalUser | null {
-    const row = this.sqlite.query('SELECT * FROM users WHERE id = ?').get(id) as StoredUser | null;
-    return row ? publicUser(row) : null;
-  }
-
-  countUsers(): number { return (this.sqlite.query('SELECT COUNT(*) count FROM users').get() as { count: number }).count; }
-
-  createSession(idHash: string, userId: string, csrfHash: string, now: number, expiresAt: number): void {
-    this.sqlite.query('INSERT INTO sessions (id_hash,user_id,csrf_hash,created_at,expires_at,last_seen_at) VALUES (?,?,?,?,?,?)').run(idHash, userId, csrfHash, now, expiresAt, now);
-  }
-
+  createUser(user: LocalUser, passwordHash: string): void { this.db.insert(schema.users).values({ id: user.id, username: user.username, displayName: user.displayName, passwordHash, active: user.active ? 1 : 0, createdAt: user.createdAt, updatedAt: user.updatedAt }).run(); }
+  getUserByUsername(username: string): (LocalUser & { passwordHash: string }) | null { const row = this.db.select().from(schema.users).where(eq(schema.users.username, username)).get(); return row ? { ...publicUser(row), passwordHash: row.passwordHash } : null; }
+  getUserById(id: string): LocalUser | null { const row = this.db.select().from(schema.users).where(eq(schema.users.id, id)).get(); return row ? publicUser(row) : null; }
+  countUsers(): number { return this.db.select({ count: sql<number>`count(*)` }).from(schema.users).get()!.count; }
+  createSession(idHash: string, userId: string, csrfHash: string, now: number, expiresAt: number): void { this.db.insert(schema.sessions).values({ idHash, userId, csrfHash, createdAt: now, expiresAt, lastSeenAt: now }).run(); }
   getSession(idHash: string, now: number): { user: SessionUser; csrfHash: string; expiresAt: number } | null {
-    const row = this.sqlite.query(`SELECT u.id,u.username,u.display_name,s.csrf_hash,s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id_hash=? AND s.expires_at>? AND u.active=1`).get(idHash, now) as { id: string; username: string; display_name: string; csrf_hash: string; expires_at: number } | null;
+    const row = this.db.select({ id: schema.users.id, username: schema.users.username, displayName: schema.users.displayName, csrfHash: schema.sessions.csrfHash, expiresAt: schema.sessions.expiresAt }).from(schema.sessions).innerJoin(schema.users, eq(schema.users.id, schema.sessions.userId)).where(and(eq(schema.sessions.idHash, idHash), gt(schema.sessions.expiresAt, now), eq(schema.users.active, 1))).get();
     if (!row) return null;
-    this.sqlite.query('UPDATE sessions SET last_seen_at=? WHERE id_hash=?').run(now, idHash);
-    return { user: { id: row.id, username: row.username, displayName: row.display_name }, csrfHash: row.csrf_hash, expiresAt: row.expires_at };
+    this.db.update(schema.sessions).set({ lastSeenAt: now }).where(eq(schema.sessions.idHash, idHash)).run();
+    return { user: { id: row.id, username: row.username, displayName: row.displayName }, csrfHash: row.csrfHash, expiresAt: row.expiresAt };
   }
-
-  deleteSession(idHash: string): void { this.sqlite.query('DELETE FROM sessions WHERE id_hash = ?').run(idHash); }
-  deleteExpiredSessions(now: number): number { return Number(this.sqlite.query('DELETE FROM sessions WHERE expires_at <= ?').run(now).changes); }
-  revokeUserSessions(userId: string): number { return Number(this.sqlite.query('DELETE FROM sessions WHERE user_id = ?').run(userId).changes); }
-
-  linkLegacyOwner(legacyUid: string, userId: string): number {
-    const run = this.sqlite.transaction(() => {
-      const existing = this.sqlite.query('SELECT user_id FROM owner_links WHERE legacy_uid = ?').get(legacyUid) as { user_id: string } | null;
-      if (existing && existing.user_id !== userId) throw new Error('Legacy owner UID is already linked to another user');
-      this.sqlite.query('INSERT INTO owner_links (legacy_uid,user_id,linked_at) VALUES (?,?,?) ON CONFLICT(legacy_uid) DO NOTHING').run(legacyUid, userId, Date.now());
-      const result = this.sqlite.query('UPDATE devices SET owner_uid=?, updated_at=? WHERE owner_uid=?').run(userId, Date.now(), legacyUid);
-      return Number(result.changes);
-    });
-    return run();
-  }
+  deleteSession(idHash: string): void { this.db.delete(schema.sessions).where(eq(schema.sessions.idHash, idHash)).run(); }
+  deleteExpiredSessions(now: number): number { return this.db.delete(schema.sessions).where(lte(schema.sessions.expiresAt, now)).returning({ idHash: schema.sessions.idHash }).all().length; }
+  revokeUserSessions(userId: string): number { return this.db.delete(schema.sessions).where(eq(schema.sessions.userId, userId)).returning({ idHash: schema.sessions.idHash }).all().length; }
+  linkLegacyOwner(legacyUid: string, userId: string): number { return this.db.transaction(() => { const existing = this.db.select({ userId: schema.ownerLinks.userId }).from(schema.ownerLinks).where(eq(schema.ownerLinks.legacyUid, legacyUid)).get(); if (existing && existing.userId !== userId) throw new Error('Legacy owner UID is already linked to another user'); this.db.insert(schema.ownerLinks).values({ legacyUid, userId, linkedAt: Date.now() }).onConflictDoNothing().run(); return this.db.update(schema.devices).set({ ownerUid: userId, updatedAt: Date.now() }).where(eq(schema.devices.ownerUid, legacyUid)).returning({ id: schema.devices.id }).all().length; }); }
 }
 
 function validateImportBundle(id: string, device: Device, access: LegacyMetadataImport['access'][string], secret: EncryptedSecret): void {
@@ -313,33 +173,13 @@ export function importLegacyMetadata(sqlite: SqliteDatabase, input: LegacyMetada
   const ids = Object.keys(input.devices).sort();
   if (!allowEmpty && ids.length === 0) throw new Error('Legacy metadata is empty; pass --allow-empty to acknowledge');
   if (stableJson(ids) !== stableJson(Object.keys(input.access).sort()) || stableJson(ids) !== stableJson(Object.keys(input.secrets).sort())) throw new Error('Legacy metadata is incomplete');
-  let inserted = 0; let unchanged = 0;
-  const run = sqlite.transaction(() => {
-    for (const id of ids) {
-      const device = input.devices[id]!; const access = input.access[id]!; const secret = input.secrets[id]!;
-      validateImportBundle(id, device, access, secret);
-      const existing = sqlite.query(`SELECT ${rowColumns} FROM devices WHERE id=?`).get(id) as StoredDevice | null;
-      const incoming = deviceToRow(device, secret);
-      if (existing) {
-        if (stableJson(existing) !== stableJson(incoming)) throw new Error(`SQLite conflict for existing device ${id}; refusing to overwrite`);
-        unchanged++; continue;
-      }
-      sqlite.query(`INSERT INTO devices (${rowColumns}) VALUES ($id,$owner_uid,$label,$active,$credential_version,$created_at,$updated_at,$parameters_json,$secret_iv,$secret_ciphertext)`).run(incoming);
-      inserted++;
-    }
-  });
-  run();
+  const db = drizzle({ client: sqlite, schema }); let inserted = 0; let unchanged = 0;
+  db.transaction(() => { for (const id of ids) { const device = input.devices[id]!; const access = input.access[id]!; const secret = input.secrets[id]!; validateImportBundle(id, device, access, secret); const existing = db.select().from(schema.devices).where(eq(schema.devices.id, id)).get(); const incoming = deviceToRow(device, secret); if (existing) { if (stableJson(existing) !== stableJson(incoming)) throw new Error(`SQLite conflict for existing device ${id}; refusing to overwrite`); unchanged++; continue; } db.insert(schema.devices).values(incoming).run(); inserted++; } });
   return { devices: ids.length, inserted, unchanged };
 }
 
 export const importMetadata = importLegacyMetadata;
-export function metadataCounts(sqlite: SqliteDatabase): { devices: number; secrets: number; owners: number; parameters: number } {
-  const rows = sqlite.query(`SELECT ${rowColumns} FROM devices`).all() as StoredDevice[];
-  return { devices: rows.length, secrets: rows.filter((row) => row.secret_iv && row.secret_ciphertext).length, owners: new Set(rows.map((row) => row.owner_uid)).size, parameters: rows.reduce((sum, row) => sum + Object.keys(JSON.parse(row.parameters_json) as object).length, 0) };
-}
-export function listMetadataDeviceIds(sqlite: SqliteDatabase): string[] { return (sqlite.query('SELECT id FROM devices ORDER BY id').all() as Array<{ id: string }>).map(({ id }) => id); }
+export function metadataCounts(sqlite: SqliteDatabase): { devices: number; secrets: number; owners: number; parameters: number } { const rows = drizzle({ client: sqlite, schema }).select().from(schema.devices).all(); return { devices: rows.length, secrets: rows.filter((row) => row.secretIv && row.secretCiphertext).length, owners: new Set(rows.map((row) => row.ownerUid)).size, parameters: rows.reduce((sum, row) => sum + Object.keys(row.parameters).length, 0) }; }
+export function listMetadataDeviceIds(sqlite: SqliteDatabase): string[] { return drizzle({ client: sqlite, schema }).select({ id: schema.devices.id }).from(schema.devices).orderBy(asc(schema.devices.id)).all().map(({ id }) => id); }
 export function parameterMap(parameters: Parameter[]): Record<string, Parameter> { return Object.fromEntries(parameters.map((parameter) => [parameter.id, parameter])); }
-export function validateTelemetryParameters(values: Record<string, SensorValue>, parameters: Record<string, Parameter>): boolean {
-  const ids = Object.keys(values);
-  return ids.length === Object.keys(parameters).length && ids.every((id) => id in parameters);
-}
+export function validateTelemetryParameters(values: Record<string, SensorValue>, parameters: Record<string, Parameter>): boolean { const ids = Object.keys(values); return ids.length === Object.keys(parameters).length && ids.every((id) => id in parameters); }
