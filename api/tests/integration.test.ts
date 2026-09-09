@@ -22,11 +22,15 @@ describe('self-hosted live integration', () => {
    response = await fetch(`http://127.0.0.1:${apiPort}/api/devices`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie, Origin: env.APP_ORIGIN }, body: JSON.stringify({ label: 'Test device', parameters: [{ label: 'Temperature', unit: 'C', points: 1 }] }) }); expect(response.status).toBe(403);
    response = await fetchApi('/api/devices', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: env.APP_ORIGIN }, body: JSON.stringify({ label: 'Test device', parameters: [{ label: 'Temperature', unit: 'C', points: 1 }] }) }); expect(response.status).toBe(201); const created = await response.json() as { device: { id: string }; secret: string }; deviceId = created.device.id; secret = created.secret;
    await Bun.sleep(1500);
-   const mqtt = connect(env.MQTT_URL, { username: deviceId, password: secret, clientId: deviceId }); await new Promise<void>((resolve, reject) => { mqtt.once('connect', () => resolve()); mqtt.once('error', reject); });
+   const mqtt = connect(env.MQTT_URL, { username: deviceId, password: secret, clientId: deviceId, reconnectPeriod: 0 }); await new Promise<void>((resolve, reject) => { mqtt.once('connect', () => resolve()); mqtt.once('error', reject); });
    for (let i = 0; i < 12; i++) await mqtt.publishAsync(`devices/${deviceId}/1/telemetry`, JSON.stringify({ timestamp: Date.now() + i, writeId: `write-id-${i}`, credentialVersion: 1, values: { parameter_1: { status: 'ok', value: i } } }), { qos: 1 });
    await Bun.sleep(500); expect(service.repository.getHistory(deviceId, 0, Date.now() + 60_000, 100).length).toBe(12); expect(await redis.lLen(`kinan:telemetry:${deviceId}:last10`)).toBe(10); let snapshot = await sseSnapshot(); expect(snapshot.last10).toHaveLength(10); expect(snapshot.latest.values.parameter_1.value).toBe(11);
    await redis.del(`kinan:telemetry:${deviceId}:last10`); snapshot = await sseSnapshot(); expect(snapshot.last10).toHaveLength(10);
-   response = await fetchApi(`/api/devices/${deviceId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Origin: env.APP_ORIGIN }, body: JSON.stringify({ active: false }) }); expect(response.status).toBe(200); await Bun.sleep(1200);
-   await mqtt.publishAsync(`devices/${deviceId}/1/telemetry`, JSON.stringify({ timestamp: Date.now(), writeId: 'write-id-disabled', credentialVersion: 1, values: { parameter_1: { status: 'ok', value: 99 } } }), { qos: 1 }); await Bun.sleep(500); expect(service.repository.getHistory(deviceId, 0, Date.now() + 60_000, 100).length).toBe(12); mqtt.end(true);
+   // Reloading an ACL that removes this authenticated device must close its
+   // current connection; publishing afterward could otherwise wait forever.
+   const disconnected = new Promise<void>((resolve) => mqtt.once('close', resolve));
+   response = await fetchApi(`/api/devices/${deviceId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Origin: env.APP_ORIGIN }, body: JSON.stringify({ active: false }) }); expect(response.status).toBe(200);
+   await Promise.race([disconnected, Bun.sleep(5_000).then(() => { throw new Error('Disabled device remained connected after broker policy reload'); })]);
+   expect(service.repository.getHistory(deviceId, 0, Date.now() + 60_000, 100).length).toBe(12); mqtt.end(true);
  });
 });

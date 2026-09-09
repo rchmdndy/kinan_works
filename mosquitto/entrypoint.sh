@@ -11,17 +11,16 @@ fi
 chown -R mosquitto:mosquitto /mosquitto/auth /mosquitto/data
 /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf &
 pid=$!
-# The broker owns reload privileges; API only atomically replaces mounted auth files.
-last=''
+# The broker owns reload privileges. The API atomically replaces both policy
+# files, then writes this generation marker as its commit record. Watching the
+# marker avoids a lost update when both replacements land in one polling window.
+last=$(cat /mosquitto/auth/.kinan-auth-generation 2>/dev/null || true)
 while kill -0 "$pid" 2>/dev/null; do
-  current=$(cksum /mosquitto/auth/passwd /mosquitto/auth/acl 2>/dev/null | cksum || true)
-  if [ -n "$last" ] && [ "$current" != "$last" ]; then
-    # Debounce paired password/ACL replacement so the broker never reloads a half-updated policy.
-    sleep 1
-    current=$(cksum /mosquitto/auth/passwd /mosquitto/auth/acl 2>/dev/null | cksum || true)
+  current=$(cat /mosquitto/auth/.kinan-auth-generation 2>/dev/null || true)
+  if [ -n "$current" ] && [ "$current" != "$last" ]; then
     kill -HUP "$pid"
+    last=$current
   fi
-  last=$current
   sleep 1
 done
 wait "$pid"

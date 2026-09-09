@@ -17,7 +17,7 @@ ENV NODE_ENV=production \
     API_PORT=3000 \
     SQLITE_PATH=/data/kinan.sqlite
 WORKDIR /app
-RUN apk add --no-cache mosquitto-clients
+RUN apk add --no-cache mosquitto mosquitto-clients
 COPY --from=build --chown=bun:bun /app/api/dist ./dist
 RUN mkdir -p /data
 EXPOSE 3000
