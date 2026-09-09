@@ -1,14 +1,33 @@
 {
   "name": "kinan-works",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "bun run --cwd api dev & bun run --cwd web dev",
     "build": "bun run --cwd api build && bun run --cwd web build && bun run --cwd simulator build",
     "test": "bun test --timeout 60000 api/tests web/src/lib simulator/src/index.test.ts",
     "typecheck": "bun run --cwd api typecheck && bun run --cwd web check && bun run --cwd simulator typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "admin": "bun --cwd api src/admin.ts",
+    "seed:demo": "bun run --cwd api seed:demo",
     "prune:dry": "bun scripts/prune.ts",
     "prune:apply": "bun scripts/prune.ts --apply"
   },
-  "workspaces": ["api", "web", "simulator"]
+  "workspaces": [
+    "api",
+    "web",
+    "simulator"
+  ],
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "eslint": "9.39.1",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-svelte": "3.12.3",
+    "globals": "16.5.0",
+    "prettier": "3.6.2",
+    "prettier-plugin-svelte": "3.4.0",
+    "typescript-eslint": "8.46.3"
+  }
 }
