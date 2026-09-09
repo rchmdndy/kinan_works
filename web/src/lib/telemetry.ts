@@ -8,13 +8,19 @@ export type TelemetrySnapshot = {
 export type TelemetryConnectionState = 'connecting' | 'open' | 'error';
 
 type EventSourceLike = {
-  addEventListener(type: string, listener: (event: MessageEvent<string>) => void): void;
+  addEventListener(
+    type: string,
+    listener: (event: MessageEvent<string>) => void,
+  ): void;
   close(): void;
   onopen: ((event: Event) => void) | null;
   onerror: ((event: Event) => void) | null;
 };
 
-type EventSourceFactory = (url: string, init: EventSourceInit) => EventSourceLike;
+type EventSourceFactory = (
+  url: string,
+  init: EventSourceInit,
+) => EventSourceLike;
 
 type TelemetryEventHandlers = {
   snapshot(snapshot: TelemetrySnapshot): void;
@@ -28,7 +34,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isTelemetryPacket(value: unknown): value is TelemetryPacket {
-  if (!isRecord(value) || !Number.isFinite(value.timestamp) || !isRecord(value.values)) return false;
+  if (
+    !isRecord(value) ||
+    !Number.isFinite(value.timestamp) ||
+    !isRecord(value.values)
+  )
+    return false;
   return Object.values(value.values).every((reading) => {
     if (!isRecord(reading)) return false;
     return reading.status === 'ok'
@@ -38,10 +49,15 @@ export function isTelemetryPacket(value: unknown): value is TelemetryPacket {
 }
 
 function packetKey(packet: TelemetryPacket): string {
-  return packet.writeId ? `write:${packet.writeId}` : `packet:${packet.timestamp}:${JSON.stringify(packet.values)}`;
+  return packet.writeId
+    ? `write:${packet.writeId}`
+    : `packet:${packet.timestamp}:${JSON.stringify(packet.values)}`;
 }
 
-export function lastTelemetrySamples(value: Record<string, TelemetryPacket> | TelemetryPacket[] | null, limit = 10): TelemetryPacket[] {
+export function lastTelemetrySamples(
+  value: Record<string, TelemetryPacket> | TelemetryPacket[] | null,
+  limit = 10,
+): TelemetryPacket[] {
   const samples = Array.isArray(value) ? value : Object.values(value ?? {});
   const unique = new Map<string, TelemetryPacket>();
   for (const sample of samples) {
@@ -52,7 +68,11 @@ export function lastTelemetrySamples(value: Record<string, TelemetryPacket> | Te
     .slice(-limit);
 }
 
-export function mergeTelemetrySamples(current: TelemetryPacket[], incoming: TelemetryPacket[], limit = 10): TelemetryPacket[] {
+export function mergeTelemetrySamples(
+  current: TelemetryPacket[],
+  incoming: TelemetryPacket[],
+  limit = 10,
+): TelemetryPacket[] {
   return lastTelemetrySamples([...current, ...incoming], limit);
 }
 
@@ -61,17 +81,22 @@ export function parseTelemetrySnapshot(data: string): TelemetrySnapshot | null {
     const parsed: unknown = JSON.parse(data);
     if (!isRecord(parsed)) return null;
     const payload = isRecord(parsed.data) ? parsed.data : parsed;
-    const latest = payload.latest == null ? null : (isTelemetryPacket(payload.latest) ? payload.latest : null);
+    const latest =
+      payload.latest == null
+        ? null
+        : isTelemetryPacket(payload.latest)
+          ? payload.latest
+          : null;
     if (payload.latest != null && !latest) return null;
     const candidateSamples = Array.isArray(payload.last10)
       ? payload.last10
       : Array.isArray(payload.samples)
         ? payload.samples
         : Array.isArray(payload.history)
-        ? payload.history
-        : isRecord(payload.history)
-          ? Object.values(payload.history)
-          : [];
+          ? payload.history
+          : isRecord(payload.history)
+            ? Object.values(payload.history)
+            : [];
     if (!candidateSamples.every(isTelemetryPacket)) return null;
     return { latest, last10: lastTelemetrySamples(candidateSamples, 10) };
   } catch {
@@ -83,7 +108,8 @@ export function parseTelemetryEvent(data: string): TelemetryPacket | null {
   try {
     const parsed: unknown = JSON.parse(data);
     if (isTelemetryPacket(parsed)) return parsed;
-    if (isRecord(parsed) && isTelemetryPacket(parsed.packet)) return parsed.packet;
+    if (isRecord(parsed) && isTelemetryPacket(parsed.packet))
+      return parsed.packet;
     return null;
   } catch {
     return null;
@@ -93,10 +119,14 @@ export function parseTelemetryEvent(data: string): TelemetryPacket | null {
 export function connectTelemetryEvents(
   deviceId: string,
   handlers: TelemetryEventHandlers,
-  createEventSource: EventSourceFactory = (url, init) => new EventSource(url, init)
+  createEventSource: EventSourceFactory = (url, init) =>
+    new EventSource(url, init),
 ): () => void {
   handlers.state('connecting');
-  const source = createEventSource(`/api/devices/${encodeURIComponent(deviceId)}/events`, { withCredentials: true });
+  const source = createEventSource(
+    `/api/devices/${encodeURIComponent(deviceId)}/events`,
+    { withCredentials: true },
+  );
 
   source.addEventListener('snapshot', (event) => {
     const snapshot = parseTelemetrySnapshot(event.data);

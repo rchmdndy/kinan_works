@@ -1,19 +1,26 @@
 import { afterEach, expect, test } from 'bun:test';
-import { api, ApiError } from './api';
+import { api, ApiError, API_TIMEOUT_MS } from './api';
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 test('api sends cookie credentials to a same-origin API path without bearer tokens', async () => {
   let requestPath = '';
   let requestInit: RequestInit | undefined;
-  globalThis.fetch = (async (path: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = (async (
+    path: string | URL | Request,
+    init?: RequestInit,
+  ) => {
     requestPath = String(path);
     requestInit = init;
     return Response.json({ ok: true });
   }) as typeof fetch;
 
-  expect(await api<{ ok: boolean }>('/api/devices', { method: 'POST', body: '{}' })).toEqual({ ok: true });
+  expect(
+    await api<{ ok: boolean }>('/api/devices', { method: 'POST', body: '{}' }),
+  ).toEqual({ ok: true });
   expect(requestPath).toBe('/api/devices');
   expect(requestInit?.credentials).toBe('include');
   const headers = new Headers(requestInit?.headers);
@@ -28,12 +35,18 @@ test('api rejects non-API origins before fetching', async () => {
     return Response.json({});
   }) as typeof fetch;
 
-  await expect(api('https://example.com/api/devices')).rejects.toThrow('same-origin');
+  await expect(api('https://example.com/api/devices')).rejects.toThrow(
+    'same-origin',
+  );
   expect(called).toBe(false);
 });
 
 test('api exposes response status without leaking response details', async () => {
-  globalThis.fetch = (async () => Response.json({ error: 'Authentication required' }, { status: 401 })) as typeof fetch;
+  globalThis.fetch = (async () =>
+    Response.json(
+      { error: 'Authentication required' },
+      { status: 401 },
+    )) as typeof fetch;
   try {
     await api('/api/auth/session');
     throw new Error('Expected request to fail');
@@ -43,3 +56,22 @@ test('api exposes response status without leaking response details', async () =>
     expect((error as Error).message).toBe('Authentication required');
   }
 });
+
+test(
+  'api turns a timed-out request into a usable local error',
+  async () => {
+    globalThis.fetch = ((_path, init) =>
+      new Promise((_, reject) =>
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('Timed out', 'TimeoutError')),
+        ),
+      )) as typeof fetch;
+
+    const startedAt = Date.now();
+    await expect(api('/api/auth/session')).rejects.toThrow(
+      'Server tidak merespons',
+    );
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(API_TIMEOUT_MS - 100);
+  },
+  API_TIMEOUT_MS + 2_000,
+);
