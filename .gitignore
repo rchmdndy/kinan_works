@@ -14,5 +14,6 @@ coverage/
 *.db
 *.db-wal
 *.db-shm
+/data/
 .zcode/
 .DS_Store
