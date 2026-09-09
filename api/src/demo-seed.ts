@@ -1,8 +1,6 @@
 import { Database as SqliteDatabase } from 'bun:sqlite';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { MosquittoFileCredentials } from './broker.js';
-import { loadConfig, type Config } from './config.js';
+import { loadConfig } from './config.js';
 import { encryptSecret, generateDeviceSecret } from './crypto.js';
 import {
   backupDatabase,

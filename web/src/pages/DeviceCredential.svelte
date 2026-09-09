@@ -11,11 +11,9 @@
   let {
     device,
     secret = '',
-    ondevicechange,
   }: {
     device: Device;
     secret?: string;
-    ondevicechange: (device: Device) => void;
   } = $props();
 
   let secretBusy = $state(false);

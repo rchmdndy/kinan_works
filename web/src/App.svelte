@@ -175,7 +175,6 @@
       {:else if route.page === 'credential'}<DeviceCredential
           device={selectedDevice}
           secret={secretDeviceId === selectedDevice.id ? revealedSecret : ''}
-          ondevicechange={updateDevice}
         />
       {:else}<DeviceRealtime device={selectedDevice} />{/if}
     {:else}<section class="panel empty">
