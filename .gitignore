@@ -15,5 +15,6 @@ coverage/
 *.db-wal
 *.db-shm
 /data/
+/.benchmark/
 .zcode/
 .DS_Store

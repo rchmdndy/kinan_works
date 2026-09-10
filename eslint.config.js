@@ -13,6 +13,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/coverage/**',
       '.bun/**',
+      '.benchmark/**',
       '.zcode/**',
       'data/**',
       'config/**',
