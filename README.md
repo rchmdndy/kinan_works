@@ -184,6 +184,20 @@ For rollback, use the previous shared tag and pull/recreate both app services. A
 
 ## Simulator
 
+### Local Growth Chamber web simulator
+
+Run the loopback-only gateway, then open `http://127.0.0.1:4190`:
+
+```sh
+bun run simulator:web
+```
+
+The page simulates the five parameters from `FIRMWARE_PARAMETERS` and connects only to `mqtts://mqtt.growsense.my.id:8883` with certificate verification enabled. Enter the device ID, secret, credential version, publish interval, and optional PEM CA in the page. Credentials and the optional CA remain in gateway process memory: they are not written to browser storage, cookies, query strings, files, or responses, and are cleared on disconnect or failed authentication. The secret and CA inputs clear after a successful connection.
+
+Use a dedicated test device. The page publishes telemetry, actual control state, availability/heartbeat, Last Will, and command results at QoS 1. It supports normal, rejected, delayed, and no-response command scenarios plus clean disconnect, abrupt disconnect, and reconnect. Local setpoint or switch changes increment the state revision. The gateway permits one active simulated device, binds only to `127.0.0.1`, requires exact loopback Origin on mutations, and does not offer an arbitrary broker URL or an insecure TLS mode.
+
+### Environment-driven CLI simulator
+
 Create a device in the UI, then set its ID, secret, parameter IDs, and credential version in the environment. The simulator publishes MQTT packets rather than calling a cloud service:
 
 ```sh
