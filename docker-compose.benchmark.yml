@@ -1,0 +1,73 @@
+# Invoke only through scripts/benchmark/stack.ts; never loads the demo .env.
+name: ${BENCH_PROJECT:?Use benchmark stack.ts}
+x-server: &server
+  cgroup_parent: ${BENCH_SLICE:?Aggregate slice required}
+  restart: 'no'
+  labels:
+    works.kinan.benchmark: ${BENCH_PROJECT}
+services:
+  redis:
+    <<: *server
+    image: redis:7.4-alpine
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [server]
+  mosquitto:
+    <<: *server
+    image: eclipse-mosquitto:2.0.21
+    entrypoint: ['/mosquitto/config/entrypoint.sh']
+    environment:
+      MQTT_INGEST_USERNAME: ${MQTT_INGEST_USERNAME:?}
+      MQTT_INGEST_PASSWORD: ${MQTT_INGEST_PASSWORD:?}
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/entrypoint.sh:/mosquitto/config/entrypoint.sh:ro
+      - ${BENCH_DIR:?}/auth:/mosquitto/auth
+      - broker-data:/mosquitto/data
+    ports: ['127.0.0.1:${BENCH_MQTT_PORT:?}:1883']
+    networks: [server]
+  api:
+    <<: *server
+    build: { context: ., dockerfile: api/Dockerfile }
+    user: '0:0'
+    environment:
+      NODE_ENV: development
+      API_PORT: '3000'
+      APP_ORIGIN: http://127.0.0.1:${BENCH_HTTP_PORT:?}
+      LOCAL_APP_ORIGINS: ''
+      SQLITE_PATH: /data/benchmark.sqlite
+      ENCRYPTION_KEY_BASE64: ${ENCRYPTION_KEY_BASE64:?}
+      REDIS_URL: redis://redis:6379
+      MQTT_URL: mqtt://mosquitto:1883
+      MQTT_INGEST_USERNAME: ${MQTT_INGEST_USERNAME:?}
+      MQTT_INGEST_PASSWORD: ${MQTT_INGEST_PASSWORD:?}
+      MOSQUITTO_PASSWORD_FILE: /mosquitto-auth/passwd
+      MOSQUITTO_ACL_FILE: /mosquitto-auth/acl
+    volumes:
+      - ${BENCH_DIR}/db:/data
+      - ${BENCH_DIR}/auth:/mosquitto-auth
+    depends_on:
+      redis: { condition: service_healthy }
+      mosquitto: { condition: service_started }
+    networks: [server]
+  nginx:
+    <<: *server
+    image: nginx:1.28-alpine
+    volumes:
+      ['./scripts/benchmark/nginx.conf:/etc/nginx/conf.d/default.conf:ro']
+    ports: ['127.0.0.1:${BENCH_HTTP_PORT}:8080']
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [server]
+networks:
+  server:
+    # Project-private bridge; internal-only bridges suppress port publishing on some Docker versions.
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.host_binding_ipv4: '127.0.0.1'
+volumes:
+  broker-data:

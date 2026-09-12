@@ -1,4 +1,5 @@
 import { Database as SqliteDatabase } from 'bun:sqlite';
+import { existsSync } from 'node:fs';
 import { MosquittoFileCredentials } from './broker.js';
 import { loadConfig } from './config.js';
 import { encryptSecret, generateDeviceSecret } from './crypto.js';
@@ -16,7 +17,39 @@ export const DEMO_USER_ID = 'demo-user-v1';
 export const DEMO_DEVICE_ID = 'demo-device-01';
 const DEMO_DISPLAY_NAME = 'Demo Administrator';
 const DEMO_DEVICE_LABEL = 'Demo device';
-const LEGACY_DEMO_USERNAMES = ['demo'];
+const OWNERSHIP_KEY = 'demo_seed_v2';
+const OWNERSHIP_VALUE = JSON.stringify({
+  user: DEMO_USER_ID,
+  device: DEMO_DEVICE_ID,
+});
+const legacyParameters = parameterMap([
+  {
+    id: 'temperature',
+    label: 'Temperature',
+    unit: '°C',
+    points: 1,
+    type: 'nilai',
+  },
+]);
+export const DEMO_PARAMETERS = parameterMap([
+  ...Object.values(legacyParameters),
+  {
+    id: 'demo_state',
+    label: 'Demo switch',
+    unit: '',
+    points: 0,
+    type: 'control-state',
+  },
+  {
+    id: 'demo_setpoint',
+    label: 'Demo setpoint',
+    unit: '°C',
+    points: 1,
+    type: 'control-setpoint',
+    min: 0,
+    max: 100,
+  },
+]);
 
 export type DemoSeedResult = {
   users: number;
@@ -26,63 +59,41 @@ export type DemoSeedResult = {
   createdDevice: boolean;
 };
 
-function removeLegacyDemoUsers(repository: Repository): void {
-  for (const username of LEGACY_DEMO_USERNAMES) {
-    const legacy = repository.getUserByUsername(username);
-    if (!legacy) continue;
-    for (const device of repository.listAllDevices()) {
-      if (device.ownerUid === legacy.id) repository.deleteDevice(device.id);
-    }
-    repository.deleteUser(legacy.id);
-  }
-}
-
-function demoDevice(now: number, ownerUid: string): Device {
-  return {
-    id: DEMO_DEVICE_ID,
-    ownerUid,
-    label: DEMO_DEVICE_LABEL,
-    active: true,
-    credentialVersion: 1,
-    createdAt: now,
-    updatedAt: now,
-    parameters: parameterMap([
-      { id: 'temperature', label: 'Temperature', unit: '°C', points: 1 },
-    ]),
-  };
-}
-
-function assertDeviceIdentity(existing: Device, expected: Device): void {
+function assertOwnership(
+  database: SqliteDatabase,
+  repository: Repository,
+): void {
+  const user = repository.getUserById(DEMO_USER_ID);
+  const namedUser = repository.getUserByUsername(DEMO_USERNAME);
   if (
-    existing.ownerUid !== expected.ownerUid ||
-    existing.label !== expected.label ||
-    existing.credentialVersion !== expected.credentialVersion ||
-    JSON.stringify(existing.parameters) !== JSON.stringify(expected.parameters)
+    (user && user.username !== DEMO_USERNAME) ||
+    (namedUser && namedUser.id !== DEMO_USER_ID)
+  )
+    throw new Error('Refusing to overwrite conflicting demo user identity');
+  const marker = database
+    .query('SELECT value FROM app_metadata WHERE key = ?')
+    .get(OWNERSHIP_KEY) as { value: string } | null;
+  if (marker && marker.value !== OWNERSHIP_VALUE)
+    throw new Error('Refusing to overwrite conflicting demo ownership marker');
+  const device = repository.getDevice(DEMO_DEVICE_ID);
+  if (device && (!user || device.ownerUid !== DEMO_USER_ID))
+    throw new Error(
+      `Refusing to overwrite conflicting device ${DEMO_DEVICE_ID}`,
+    );
+  // Adopt only the exact legacy seed fingerprint. IDs or a username alone are
+  // not provenance. Once adopted, the marker owns only the three fixed params.
+  if (
+    !marker &&
+    ((user && user.displayName !== DEMO_DISPLAY_NAME) ||
+      (device &&
+        (device.label !== DEMO_DEVICE_LABEL ||
+          device.credentialVersion !== 1 ||
+          JSON.stringify(device.parameters) !==
+            JSON.stringify(legacyParameters))))
   )
     throw new Error(
-      `Refusing to overwrite conflicting device ${DEMO_DEVICE_ID}; choose another seed identity.`,
+      `Refusing to overwrite conflicting device or unproven demo identity ${DEMO_DEVICE_ID}`,
     );
-}
-
-function readonlyCounts(
-  path: string,
-): Omit<DemoSeedResult, 'createdUser' | 'createdDevice'> {
-  const database = new SqliteDatabase(path, { readonly: true, strict: true });
-  try {
-    const count = (table: 'users' | 'devices' | 'telemetry') =>
-      (
-        database.query(`SELECT count(*) AS count FROM ${table}`).get() as {
-          count: number;
-        }
-      ).count;
-    return {
-      users: count('users'),
-      devices: count('devices'),
-      telemetry: count('telemetry'),
-    };
-  } finally {
-    database.close();
-  }
 }
 
 export async function seedDemo(
@@ -96,71 +107,115 @@ export async function seedDemo(
   const config = loadConfig(env);
   if (config.NODE_ENV !== 'development')
     throw new Error('Demo seeding is allowed only when NODE_ENV=development');
-  if (options.dryRun) {
-    const counts = readonlyCounts(config.SQLITE_PATH);
-    return {
-      ...counts,
-      createdUser: false,
-      createdDevice: false,
-    };
-  }
-
-  // Always preserve a recoverable snapshot before touching an existing database.
-  backupDatabase(config.SQLITE_PATH);
-  const database = openDatabase(config.SQLITE_PATH, { backup: false });
-  const repository = new Repository(database);
+  // Never run application-wide migrations as a side effect of demo refresh.
+  const existed = existsSync(config.SQLITE_PATH);
+  if (!existed && options.dryRun)
+    throw new Error('Demo database does not exist');
+  if (!existed) openDatabase(config.SQLITE_PATH, { backup: false }).close();
+  const database = new SqliteDatabase(config.SQLITE_PATH, {
+    readonly: true,
+    strict: true,
+  });
   try {
-    const now = Date.now();
-    removeLegacyDemoUsers(repository);
-    let user = repository.getUserByUsername(DEMO_USERNAME);
-    let createdUser = false;
-    if (!user) {
-      const password = options.password || DEMO_PASSWORD;
-      if (password.length < 8)
-        throw new Error('Demo password must contain at least 8 characters');
-      const localUser: LocalUser = {
-        id: DEMO_USER_ID,
-        username: DEMO_USERNAME,
-        displayName: DEMO_DISPLAY_NAME,
-        active: true,
-        createdAt: now,
-        updatedAt: now,
-      };
-      repository.createUser(
-        localUser,
-        await Bun.password.hash(password, 'argon2id'),
-      );
-      user = repository.getUserByUsername(DEMO_USERNAME)!;
-      createdUser = true;
-    }
-
-    const expectedDevice = demoDevice(now, user.id);
-    const existing = repository.getDevice(DEMO_DEVICE_ID);
-    let createdDevice = false;
-    if (existing) assertDeviceIdentity(existing, expectedDevice);
-    else {
-      repository.saveDeviceBundle(
-        expectedDevice,
-        await encryptSecret(generateDeviceSecret(), config.encryptionKey),
-      );
-      createdDevice = true;
-    }
+    assertOwnership(database, new Repository(database));
+    if (options.dryRun) return counts(database, false, false);
+  } finally {
+    database.close();
+  }
+  const password = options.password || DEMO_PASSWORD;
+  if (password.length < 8)
+    throw new Error('Demo password must contain at least 8 characters');
+  const passwordHash = await Bun.password.hash(password, 'argon2id');
+  const secret = await encryptSecret(
+    generateDeviceSecret(),
+    config.encryptionKey,
+  );
+  backupDatabase(config.SQLITE_PATH);
+  const writable = openDatabase(config.SQLITE_PATH, {
+    backup: false,
+    migrate: false,
+  });
+  const repository = new Repository(writable);
+  try {
+    const result = writable
+      .transaction(() => {
+        // Recheck under the write lock, before the first write; conflicts are atomic.
+        assertOwnership(writable, repository);
+        const now = Date.now();
+        const user = repository.getUserById(DEMO_USER_ID);
+        const device = repository.getDevice(DEMO_DEVICE_ID);
+        if (!user) {
+          const localUser: LocalUser = {
+            id: DEMO_USER_ID,
+            username: DEMO_USERNAME,
+            displayName: DEMO_DISPLAY_NAME,
+            active: true,
+            createdAt: now,
+            updatedAt: now,
+          };
+          repository.createUser(localUser, passwordHash);
+        }
+        // Existing passwords, sessions, ownership, credential versions and secrets
+        // remain intact. No history or unrelated parameters are deleted.
+        if (!device) {
+          const demo: Device = {
+            id: DEMO_DEVICE_ID,
+            ownerUid: DEMO_USER_ID,
+            label: DEMO_DEVICE_LABEL,
+            active: true,
+            credentialVersion: 1,
+            createdAt: now,
+            updatedAt: now,
+            parameters: DEMO_PARAMETERS,
+          };
+          repository.saveDeviceBundle(demo, secret);
+        } else {
+          const parameters = { ...device.parameters, ...DEMO_PARAMETERS };
+          if (
+            JSON.stringify(device.parameters) !== JSON.stringify(parameters) ||
+            device.label !== DEMO_DEVICE_LABEL ||
+            !device.active
+          )
+            repository.updateDevice(DEMO_DEVICE_ID, {
+              parameters,
+              label: DEMO_DEVICE_LABEL,
+              active: true,
+              updatedAt: now,
+            });
+        }
+        writable
+          .query(
+            'INSERT INTO app_metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING',
+          )
+          .run(OWNERSHIP_KEY, OWNERSHIP_VALUE);
+        return counts(writable, !user, !device);
+      })
+      .immediate();
     await (
       options.broker ?? new MosquittoFileCredentials(repository, config)
     ).sync();
-    return {
-      users: repository.countUsers(),
-      devices: repository.listAllDevices().length,
-      telemetry: repository.getHistory(
-        DEMO_DEVICE_ID,
-        0,
-        Date.now() + 1,
-        1_000_000,
-      ).length,
-      createdUser,
-      createdDevice,
-    };
+    return result;
   } finally {
     repository.close();
   }
+}
+
+function counts(
+  database: SqliteDatabase,
+  createdUser: boolean,
+  createdDevice: boolean,
+): DemoSeedResult {
+  const count = (table: 'users' | 'devices' | 'telemetry') =>
+    (
+      database.query(`SELECT count(*) AS count FROM ${table}`).get() as {
+        count: number;
+      }
+    ).count;
+  return {
+    users: count('users'),
+    devices: count('devices'),
+    telemetry: count('telemetry'),
+    createdUser,
+    createdDevice,
+  };
 }

@@ -3,6 +3,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+!.env.vps.example
 firebase-service-account*.json
 config/*.json
 !.keep
@@ -15,5 +16,7 @@ coverage/
 *.db-wal
 *.db-shm
 /data/
+/.benchmark/
 .zcode/
 .DS_Store
+firmware/**/platform_config.h

@@ -11,15 +11,39 @@ export const loginSchema = z.strictObject({
   password: z.string().min(1).max(1024),
 });
 
-export const parameterFieldsSchema = z.strictObject({
+const parameterFields = {
   label: z.string().trim().min(1).max(100),
   unit: z.string().trim().max(32),
-  points: z.number().int().min(0).max(10),
-});
+  points: z.number().int().min(0).max(10).default(0),
+  type: z.enum(['nilai', 'control-state', 'control-setpoint']).default('nilai'),
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+};
+const validParameter = (p: {
+  type: string;
+  unit: string;
+  points: number;
+  min?: number;
+  max?: number;
+}) =>
+  p.type === 'control-setpoint'
+    ? p.min !== undefined && p.max !== undefined && p.min < p.max
+    : p.min === undefined &&
+      p.max === undefined &&
+      (p.type !== 'control-state' || (p.unit === '' && p.points === 0));
+export const parameterFieldsSchema = z
+  .strictObject(parameterFields)
+  .refine(validParameter, 'Invalid parameter bounds or switch formatting');
 
-export const parameterSchema = parameterFieldsSchema.extend({
-  id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
-});
+export const parameterSchema = z
+  .strictObject({
+    ...parameterFields,
+    id: z
+      .string()
+      .regex(/^[a-zA-Z0-9_-]{1,64}$/)
+      .optional(),
+  })
+  .refine(validParameter, 'Invalid parameter bounds or switch formatting');
 
 export const createDeviceSchema = z.strictObject({
   label: z.string().trim().min(1).max(100),
@@ -38,7 +62,9 @@ export const updateDeviceSchema = z
   )
   .superRefine((value, ctx) => {
     if (!value.parameters) return;
-    const ids = value.parameters.map((parameter) => parameter.id);
+    const ids = value.parameters.flatMap((parameter) =>
+      parameter.id ? [parameter.id] : [],
+    );
     if (new Set(ids).size !== ids.length)
       ctx.addIssue({
         code: 'custom',

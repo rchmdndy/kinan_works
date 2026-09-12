@@ -1,54 +1,25 @@
-import type { Device } from './types';
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-export type FirmwareSnippetOptions = {
-  mqttHost: string;
-  mqttPort: number;
-  mqttTlsPort: number;
-  deviceSecret: string;
-};
-
-export function defaultMqttHost(): string {
-  return typeof window === 'undefined' ? 'localhost' : window.location.hostname;
-}
-
-export const PLACEHOLDER_SECRET = 'KLIK_TAMPILKAN_SECRET_DULU';
-
-/** Compact protocol reference, not a complete or directly compilable sketch. */
-export function firmwareSnippet(
-  device: Device,
-  options: FirmwareSnippetOptions,
-): string {
-  const parameters = Object.values(device.parameters);
-  const sensors = parameters.filter((p) => (p.type ?? 'nilai') === 'nilai');
-  const controls = parameters.filter(
-    (p) => p.type === 'control-state' || p.type === 'control-setpoint',
-  );
-  const json = (value: unknown) => JSON.stringify(value, null, 2);
-  const sampleValue = (p: (typeof parameters)[number]) =>
-    p.type === 'control-state' ? false : (p.min ?? 0);
-  const envelope = {
-    credentialVersion: device.credentialVersion,
-    timestamp: 1737021600000,
-    connectionId: '00000000-0000-4000-8000-000000000001',
-  };
-  const commandId = '00000000-0000-4000-8000-000000000002';
-  const target = controls[0];
-
-  return `// REFERENSI MQTT — contoh JSON + pseudocode, bukan sketch siap kompilasi.
-// DEVICE: ${device.label} (${device.id})
-const char* mqtt_server = ${json(options.mqttHost)};
-const int mqtt_port = ${options.mqttPort};
-const int mqtt_secure_port = ${options.mqttTlsPort};
-const char* mqtt_user = ${json(`${device.id}-v${device.credentialVersion}`)};
-const char* mqtt_pass = ${json(options.deviceSecret)};
-const char* mqtt_client_id = ${json(device.id)};
+exports[`credential reference snapshot covers all five topics without a real secret 1`] = `
+"// REFERENSI MQTT — contoh JSON + pseudocode, bukan sketch siap kompilasi.
+// DEVICE: Growth Chamber (growth-chamber-firmware-v1)
+const char* mqtt_server = "localhost";
+const int mqtt_port = 1883;
+const int mqtt_secure_port = 8883;
+const char* mqtt_user = "growth-chamber-firmware-v1-v2";
+const char* mqtt_pass = "KLIK_TAMPILKAN_SECRET_DULU";
+const char* mqtt_client_id = "growth-chamber-firmware-v1";
 // Produksi: TLS dengan verifikasi CA; jangan cetak secret ke log.
 
 PARAMETER DASHBOARD (ID immutable; label bukan key payload)
-${parameters.map((p) => `${p.id} | ${p.label} | ${p.type ?? 'nilai'}${p.type === 'control-state' ? ' | boolean' : ` | unit ${p.unit}, precision ${p.points}`}${p.type === 'control-setpoint' ? ` | min ${p.min}, max ${p.max}` : ''}`).join('\n') || '(belum ada parameter)'}
+parameter_22313672376ff8dc15d3390138ea5469 | tempSensor | nilai | unit °C, precision 1
+parameter_874f5641c309529bf832e9c9e34bac85 | rhSensor | nilai | unit %, precision 1
+parameter_faa2e3d2ce693a47fccb9b552816b805 | setpointTemp | control-setpoint | unit °C, precision 1 | min 0, max 50
+parameter_0d2b141f932ed0895fbda4c4d49eb54e | setpointRH | control-setpoint | unit %, precision 1 | min 0, max 100
+parameter_973c3627b847aa1e9a57ff38b13858ed | systemRunning | control-state | boolean
 // Firmware umum: petakan variabel/pin lokal ke ID di atas secara eksplisit.
 // Jangan menebak pemetaan dari label atau urutan; jangan kirim sourceKey sebagai ID.
-// Khusus Growth Chamber: GET /api/firmware/${device.id}/config
+// Khusus Growth Chamber: GET /api/firmware/growth-chamber-firmware-v1/config
 // dengan Authorization: Bearer <device-secret> hanya tersedia untuk profil khusus.
 // Validasi schemaVersion=1, profile=growth-chamber-v1, deviceId, credentialVersion,
 // kelima sourceKey/type/ID unik dan bounds; simpan mapping sourceKey -> id:
@@ -59,24 +30,57 @@ ${parameters.map((p) => `${p.id} | ${p.label} | ${p.type ?? 'nilai'}${p.type ===
 // Metadata config tidak boleh menimpa setpoint aktual, pin, atau control loop lokal.
 
 TOPIK (semua QoS 1; arah dari sudut perangkat)
-PUBLISH   devices/${device.id}/telemetry       retain=false
-PUBLISH   devices/${device.id}/state           retain=true
-PUBLISH   devices/${device.id}/availability    retain=true (termasuk LWT)
-SUBSCRIBE devices/${device.id}/commands        QoS=1; pengirim retain=false
-PUBLISH   devices/${device.id}/command-results retain=false
+PUBLISH   devices/growth-chamber-firmware-v1/telemetry       retain=false
+PUBLISH   devices/growth-chamber-firmware-v1/state           retain=true
+PUBLISH   devices/growth-chamber-firmware-v1/availability    retain=true (termasuk LWT)
+SUBSCRIBE devices/growth-chamber-firmware-v1/commands        QoS=1; pengirim retain=false
+PUBLISH   devices/growth-chamber-firmware-v1/command-results retain=false
 
 // Angka/UUID di contoh berikut hanya ilustrasi, bukan nilai sensor aktual.
 // Runtime: timestamp=epoch MILIDETIK tersinkron; UUID baru, jangan salin konstanta contoh.
 
 1. TELEMETRY — hanya sensor nilai, seluruh sensor perangkat ini
-${json({ timestamp: envelope.timestamp, writeId: '00000000-0000-4000-8000-000000000003', credentialVersion: device.credentialVersion, values: Object.fromEntries(sensors.map((p) => [p.id, { status: 'ok', value: 0 }])) })}
+{
+  "timestamp": 1737021600000,
+  "writeId": "00000000-0000-4000-8000-000000000003",
+  "credentialVersion": 2,
+  "values": {
+    "parameter_22313672376ff8dc15d3390138ea5469": {
+      "status": "ok",
+      "value": 0
+    },
+    "parameter_874f5641c309529bf832e9c9e34bac85": {
+      "status": "ok",
+      "value": 0
+    }
+  }
+}
 // values[id] = {status:"ok", value:readSensor(id)} untuk angka finite;
 // jika pembacaan gagal: {status:"error", error:"Sensor reading unavailable"} tanpa value.
 // writeId=UUID baru per sampel; gunakan writeId yang sama saat retry sampel itu.
 // Tidak ada control-state/control-setpoint di telemetry; tidak ada array data legacy.
 
 2. STATE — SEMUA control-state dan control-setpoint, nilai aktual lokal
-${json({ ...envelope, revision: 0, parameters: controls.map((p) => ({ id: p.id, value: sampleValue(p) })) })}
+{
+  "credentialVersion": 2,
+  "timestamp": 1737021600000,
+  "connectionId": "00000000-0000-4000-8000-000000000001",
+  "revision": 0,
+  "parameters": [
+    {
+      "id": "parameter_faa2e3d2ce693a47fccb9b552816b805",
+      "value": 0
+    },
+    {
+      "id": "parameter_0d2b141f932ed0895fbda4c4d49eb54e",
+      "value": 0
+    },
+    {
+      "id": "parameter_973c3627b847aa1e9a57ff38b13858ed",
+      "value": false
+    }
+  ]
+}
 // parameters = semua kontrol dengan readActualLocalValue(id), bukan desired value dari UI.
 // Boolean untuk control-state; angka finite dalam min/max dashboard untuk control-setpoint.
 // Sensor nilai tidak masuk state. Tanpa kontrol: parameters=[].
@@ -84,7 +88,12 @@ ${json({ ...envelope, revision: 0, parameters: controls.map((p) => ({ id: p.id, 
 // Jangan naik hanya karena heartbeat. Publish snapshot lengkap setelah command dan berkala.
 
 3. AVAILABILITY — heartbeat online + Last Will offline
-${json({ ...envelope, online: true })}
+{
+  "credentialVersion": 2,
+  "timestamp": 1737021600000,
+  "connectionId": "00000000-0000-4000-8000-000000000001",
+  "online": true
+}
 // SEBELUM CONNECT: connectionId=UUID baru; revision=0; kosongkan cache dedup sesi.
 // Pasang LWT dengan envelope sesi yang sama, online=false, QoS=1, retain=true.
 // Timestamp LWT dibuat saat pemasangan will, bukan ditebak saat broker menerbitkannya.
@@ -93,8 +102,17 @@ ${json({ ...envelope, online: true })}
 // Disconnect terencana: publish online=false sebelum disconnect bila memungkinkan.
 
 4. COMMANDS — terima dari backend, jangan publish command dari firmware
-${json({ commandId, parameterId: target?.id ?? '<ID-kontrol-dashboard>', value: target ? sampleValue(target) : false, ...envelope, expiresAt: envelope.timestamp + 10000, revision: 0 })}
-${target ? '// Target contoh adalah kontrol pertama; handler wajib mendukung SEMUA ID kontrol di atas.' : '// Tidak ada kontrol pada perangkat ini: contoh bentuk saja, jangan eksekusi target placeholder.'}
+{
+  "commandId": "00000000-0000-4000-8000-000000000002",
+  "parameterId": "parameter_faa2e3d2ce693a47fccb9b552816b805",
+  "value": 0,
+  "credentialVersion": 2,
+  "timestamp": 1737021600000,
+  "connectionId": "00000000-0000-4000-8000-000000000001",
+  "expiresAt": 1737021610000,
+  "revision": 0
+}
+// Target contoh adalah kontrol pertama; handler wajib mendukung SEMUA ID kontrol di atas.
 // Pseudocode handler (di luar callback MQTT; publish QoS 1 dapat memanggil poll):
 //   parse + validasi bentuk; abaikan malformed/retained command.
 //   jika commandId sudah diproses dalam sesi: jangan eksekusi ulang (adapter: cache 32 ID).
@@ -108,7 +126,13 @@ ${target ? '// Target contoh adalah kontrol pertama; handler wajib mendukung SEM
 // oleh control loop asli. succeeded bukan bukti suhu/RH fisik sudah mencapai target.
 
 5. COMMAND-RESULTS — hanya sesudah validasi / penerapan, bukan saat paket diterima
-${json({ ...envelope, commandId, status: 'succeeded' })}
+{
+  "credentialVersion": 2,
+  "timestamp": 1737021600000,
+  "connectionId": "00000000-0000-4000-8000-000000000001",
+  "commandId": "00000000-0000-4000-8000-000000000002",
+  "status": "succeeded"
+}
 // Jika ditolak: status="rejected", tambahkan reason (maksimum 200 karakter).
 // Envelope memakai sesi/kredensial lokal; commandId harus sama dengan command.
 // timestamp hasil = nowMs(), tidak boleh mendahului timestamp command.
@@ -116,7 +140,5 @@ ${json({ ...envelope, commandId, status: 'succeeded' })}
 // Backend mencocokkan sesi/kredensial dan command pending; hasil lama dapat diabaikan.
 // Tidak ada ACK bukan sukses/gagal pasti: backend dapat menandai unknown; jangan
 // mengeksekusi ulang otomatis dengan ID baru. Jangan mengiklankan capabilities.
+"
 `;
-}
-
-export { PLACEHOLDER_SECRET as PLACEHOLDER_SECRET_VALUE };

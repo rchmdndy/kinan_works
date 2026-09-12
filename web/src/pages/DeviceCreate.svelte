@@ -14,7 +14,7 @@
   const emptyErrors: DeviceDraftErrors = { parameter: [] };
   let label = $state('');
   let parameters = $state<ParameterDraft[]>([
-    { label: '', unit: '', points: 1 },
+    { type: 'nilai', label: '', unit: '', points: 1 },
   ]);
   let errors = $state<DeviceDraftErrors>(emptyErrors);
   let busy = $state(false);
@@ -23,7 +23,10 @@
     $props();
 
   function addParameter() {
-    parameters = [...parameters, { label: '', unit: '', points: 1 }];
+    parameters = [
+      ...parameters,
+      { type: 'nilai', label: '', unit: '', points: 1 },
+    ];
     errors = emptyErrors;
   }
   function removeParameter(index: number) {

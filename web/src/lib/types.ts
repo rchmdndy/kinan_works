@@ -3,6 +3,9 @@ export type Parameter = {
   label: string;
   unit: string;
   points: number;
+  type?: 'nilai' | 'control-state' | 'control-setpoint';
+  min?: number;
+  max?: number;
 };
 export type Device = {
   id: string;

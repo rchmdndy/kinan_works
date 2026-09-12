@@ -7,14 +7,16 @@
     normalizeDeviceDraft,
     validateDeviceDraft,
   } from '../lib/device-form';
-  import type { Device, Parameter } from '../lib/types';
+  import type { Device } from '../lib/types';
 
   let {
     device,
     ondevicechange,
   }: { device: Device; ondevicechange: (device: Device) => void } = $props();
   let label = $state('');
-  let parameters = $state<Parameter[]>([]);
+  let parameters = $state<
+    (import('../lib/device-form').ParameterDraft & { id?: string })[]
+  >([]);
   let busy = $state(false);
   let message = $state('');
   let notice = $state('');
@@ -32,12 +34,9 @@
     }
   });
   function addParameter() {
-    let id: string;
-    do id = `parameter_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
-    while (parameters.some((parameter) => parameter.id === id));
     parameters = [
       ...parameters,
-      { id, label: 'Parameter baru', unit: '', points: 0 },
+      { type: 'nilai', label: 'Parameter baru', unit: '', points: 0 },
     ];
   }
   function removeParameter(index: number) {
@@ -101,7 +100,10 @@
   <div class="panel-heading">
     <div>
       <h2>Konfigurasi device</h2>
-      <p>ID parameter tetap; label, satuan, dan desimal dapat diedit.</p>
+      <p>
+        ID dan tipe parameter tersimpan tetap. Parameter baru default nilai.
+        Label, satuan, desimal, dan batas target dapat diedit.
+      </p>
     </div>
     <button onclick={() => void saveDevice()} disabled={busy}
       >{busy ? 'Menyimpan…' : 'Simpan perubahan'}</button
@@ -115,10 +117,6 @@
     /></label
   >
   <div class="table-wrap">
-    <div class="parameter-table table-head">
-      <span>ID</span><span>Label</span><span>Satuan</span><span>Desimal</span
-      ><span></span>
-    </div>
     <DeviceParameterForm
       bind:parameters
       {busy}

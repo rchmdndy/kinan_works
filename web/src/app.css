@@ -459,10 +459,14 @@ fieldset {
     color 0.15s ease,
     background 0.15s ease;
 }
-.device-tabs-trigger:hover:not(:disabled) {
+.device-tabs-trigger:hover:not(:disabled),
+.device-tabs-trigger:focus-visible {
   color: var(--blue-dark);
+  background: var(--blue-softer);
 }
-.device-tabs-trigger[data-state='active'] {
+.device-tabs-trigger[data-state='active'],
+.device-tabs-trigger[data-state='active']:hover:not(:disabled),
+.device-tabs-trigger[data-state='active']:focus-visible {
   color: var(--ink);
   background: var(--panel);
   box-shadow: 0 1px 4px rgba(30, 42, 58, 0.1);

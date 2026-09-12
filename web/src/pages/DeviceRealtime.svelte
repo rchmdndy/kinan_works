@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import DeviceTabs from '../components/DeviceTabs.svelte';
+  import DeviceControls from '../components/DeviceControls.svelte';
   import { drawChart, updateChart } from '../lib/chart';
   import {
     connectTelemetryEvents,
@@ -55,7 +56,9 @@
   function start() {
     reset();
     activeId = device.id;
-    selectedParameters = Object.keys(device.parameters);
+    selectedParameters = Object.values(device.parameters)
+      .filter((p) => (p.type ?? 'nilai') === 'nilai')
+      .map((p) => p.id);
     const current = generation;
     const isCurrent = () => current === generation && activeId === device.id;
     unsubscribe = connectTelemetryEvents(device.id, {
@@ -135,6 +138,7 @@
   </div>
 </header>
 <DeviceTabs deviceId={device.id} page="realtime" />
+<DeviceControls {device} />
 <section id="realtime-summary" class="summary-bar">
   <div>
     <span class:offline={unavailable()} class="live-dot"></span><span
@@ -152,7 +156,7 @@
   class="metric-grid"
   aria-label="Nilai parameter terbaru"
 >
-  {#each Object.values(device.parameters) as parameter (parameter.id)}<article
+  {#each Object.values(device.parameters).filter((p) => (p.type ?? 'nilai') === 'nilai') as parameter (parameter.id)}<article
       class="metric-card"
     >
       <div>
@@ -187,7 +191,7 @@
   </div>
   <fieldset class="parameter-selector">
     <legend>Parameter grafik</legend
-    >{#each Object.values(device.parameters) as parameter (parameter.id)}<label
+    >{#each Object.values(device.parameters).filter((p) => (p.type ?? 'nilai') === 'nilai') as parameter (parameter.id)}<label
         ><input
           type="checkbox"
           checked={selectedParameters.includes(parameter.id)}

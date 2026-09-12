@@ -1,0 +1,55 @@
+name: kinan-vps
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  mosquitto:
+    image: eclipse-mosquitto:2.0.21
+    restart: unless-stopped
+    entrypoint: ['/mosquitto/config/entrypoint.sh']
+    environment:
+      MQTT_INGEST_USERNAME: ${MQTT_INGEST_USERNAME:?Set MQTT_INGEST_USERNAME}
+      MQTT_INGEST_PASSWORD: ${MQTT_INGEST_PASSWORD:?Set MQTT_INGEST_PASSWORD}
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/entrypoint.sh:/mosquitto/config/entrypoint.sh:ro
+      - ./data/mosquitto:/mosquitto/auth
+      - mosquitto-data:/mosquitto/data
+    ports: ['127.0.0.1:${MQTT_PORT:-1883}:1883']
+  api:
+    image: ghcr.io/${GHCR_OWNER:-rchmdndy}/kinan_works-api:${IMAGE_TAG:?Set IMAGE_TAG to sha- followed by the full commit SHA}
+    restart: unless-stopped
+    user: '0:0'
+    volumes: ['./data:/data', './data/mosquitto:/mosquitto-auth']
+    environment:
+      NODE_ENV: production
+      API_PORT: 3000
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN to the public HTTPS origin}
+      LOCAL_APP_ORIGINS: ''
+      ENCRYPTION_KEY_BASE64: ${ENCRYPTION_KEY_BASE64:?Set ENCRYPTION_KEY_BASE64}
+      MQTT_INGEST_USERNAME: ${MQTT_INGEST_USERNAME:?Set MQTT_INGEST_USERNAME}
+      MQTT_INGEST_PASSWORD: ${MQTT_INGEST_PASSWORD:?Set MQTT_INGEST_PASSWORD}
+      SQLITE_PATH: /data/kinan.sqlite
+      REDIS_URL: redis://redis:6379
+      MQTT_URL: mqtt://mosquitto:1883
+      MOSQUITTO_PASSWORD_FILE: /mosquitto-auth/passwd
+      MOSQUITTO_ACL_FILE: /mosquitto-auth/acl
+    depends_on:
+      redis: { condition: service_healthy }
+      mosquitto: { condition: service_started }
+  web:
+    image: ghcr.io/${GHCR_OWNER:-rchmdndy}/kinan_works-web:${IMAGE_TAG:?Set IMAGE_TAG to sha- followed by the full commit SHA}
+    restart: unless-stopped
+    ports: ['127.0.0.1:${WEB_PORT:-8080}:8080']
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  mosquitto-data:

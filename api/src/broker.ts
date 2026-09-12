@@ -68,6 +68,11 @@ export class MosquittoFileCredentials implements BrokerCredentials {
     const aclLines = [
       `user ${this.config.MQTT_INGEST_USERNAME}`,
       'topic read devices/+/+/telemetry',
+      'topic read devices/+/telemetry',
+      'topic read devices/+/state',
+      'topic read devices/+/availability',
+      'topic read devices/+/command-results',
+      'topic write devices/+/commands',
       '',
     ];
     for (const device of devices) {
@@ -86,7 +91,21 @@ export class MosquittoFileCredentials implements BrokerCredentials {
           await decryptSecret(encrypted, this.config.encryptionKey),
         ),
       );
+      const controlUsername = `${device.id}-v${device.credentialVersion}`;
+      passwordLines.push(
+        await sha512Password(
+          this.config.MOSQUITTO_PASSWD_BIN,
+          controlUsername,
+          await decryptSecret(encrypted, this.config.encryptionKey),
+        ),
+      );
       aclLines.push(
+        `user ${controlUsername}`,
+        `topic read devices/${device.id}/commands`,
+        ...['telemetry', 'command-results', 'state', 'availability'].map(
+          (kind) => `topic write devices/${device.id}/${kind}`,
+        ),
+        '',
         `user ${device.id}`,
         `topic write devices/${device.id}/${device.credentialVersion}/telemetry`,
         '',

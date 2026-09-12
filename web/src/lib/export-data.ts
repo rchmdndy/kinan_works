@@ -27,7 +27,10 @@ export function buildExportTable(
 ): ExportTable {
   const parameters = parameterIds
     .map((id) => device.parameters[id])
-    .filter((parameter) => parameter !== undefined);
+    .filter(
+      (parameter) =>
+        parameter !== undefined && (parameter.type ?? 'nilai') === 'nilai',
+    );
   return {
     headers: [
       'timestamp',

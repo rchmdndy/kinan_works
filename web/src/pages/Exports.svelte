@@ -32,13 +32,19 @@
     knownDevices = ids;
     const current = device() || devices[0];
     deviceId = current?.id || '';
-    parameterIds = current ? Object.keys(current.parameters) : [];
+    parameterIds = current
+      ? Object.values(current.parameters)
+          .filter((p) => (p.type ?? 'nilai') === 'nilai')
+          .map((p) => p.id)
+      : [];
   });
   function changeDevice(id: string) {
     deviceId = id;
-    parameterIds = Object.keys(
+    parameterIds = Object.values(
       devices.find((item) => item.id === id)?.parameters || {},
-    );
+    )
+      .filter((p) => (p.type ?? 'nilai') === 'nilai')
+      .map((p) => p.id);
   }
   function toggleParameter(id: string) {
     parameterIds = parameterIds.includes(id)
@@ -174,13 +180,14 @@
           <div class="section-heading">
             <h2>Parameter yang disertakan</h2>
             <p>
-              {parameterIds.length} dari {Object.keys(device()!.parameters)
-                .length}
+              {parameterIds.length} dari {Object.values(
+                device()!.parameters,
+              ).filter((p) => (p.type ?? 'nilai') === 'nilai').length}
               parameter dipilih.
             </p>
           </div>
           <div class="option-grid">
-            {#each Object.values(device()!.parameters) as parameter (parameter.id)}
+            {#each Object.values(device()!.parameters).filter((p) => (p.type ?? 'nilai') === 'nilai') as parameter (parameter.id)}
               <label class="option-label">
                 <Checkbox.Root
                   class="checkbox-root"
