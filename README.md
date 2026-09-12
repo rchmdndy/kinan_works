@@ -96,6 +96,88 @@ docker compose up -d --build api web
 
 Then reload the browser (hard refresh if needed). Check that the browser URL targets this stack, not another project or proxy. `docker compose pull` alone cannot incorporate local edits.
 
+## VPS deployment from GHCR (no source build)
+
+Use Docker Engine with the Compose v2 plugin on a Linux **amd64** VPS. CI currently builds the runner's amd64 platform only. The standalone `docker-compose.vps.yml` consumes these images with one shared `IMAGE_TAG=sha-<full 40-character commit SHA>`:
+
+- `ghcr.io/rchmdndy/kinan_works-api`
+- `ghcr.io/rchmdndy/kinan_works-web`
+
+CI preserves verification and both container builds. Only successful trusted pushes to `main` or `v*` tags in `rchmdndy/kinan_works` can publish, using job-scoped `packages: write`. PRs never publish. Protect main and release tags in GitHub; a release tag is a trusted publishing input. Both publish matrix jobs must succeed before deploying their shared tag. OCI labels record the source repository and exact checked-out commit. SHA tags are not registry-enforced immutable: record the pulled digests for stronger release auditing. No `latest` tag is used.
+
+Images are available only after that workflow has actually published them; adding this configuration does not publish existing commits. Package visibility is configured separately in GitHub, not automatically made public. Public packages allow anonymous pulls. For private packages, authenticate on the VPS with a GitHub PAT (classic) limited to `read:packages`, with access to the packages and SSO authorization if required:
+
+```sh
+# Interactive token prompt; do not put the token in a command or .env.vps.
+docker login ghcr.io -u YOUR_GITHUB_USERNAME
+```
+
+### Copy runtime files and configure
+
+Copy these files from the same release checkout to a dedicated directory such as `/opt/kinan-vps`. No Bun, application sources, or Dockerfiles are needed on the VPS:
+
+```text
+/opt/kinan-vps/
+  docker-compose.vps.yml
+  .env.vps.example
+  mosquitto/
+    mosquitto.conf
+    entrypoint.sh
+  data/
+    mosquitto/
+```
+
+Retain the executable bit on `mosquitto/entrypoint.sh` (or run `chmod 755 mosquitto/entrypoint.sh`). From that directory:
+
+```sh
+umask 077
+cp -n .env.vps.example .env.vps
+mkdir -p data/mosquitto
+chmod 600 .env.vps
+openssl rand -base64 32  # New deployment encryption key only
+openssl rand -hex 32    # Separate MQTT ingest password
+```
+
+Edit `.env.vps`: set the published `IMAGE_TAG`, canonical `APP_ORIGIN=https://your-hostname` with no path, encryption key and MQTT credentials. Blank required values fail Compose interpolation. HTTPS and tag format are operator requirements, not enforced by Compose string validation. Never regenerate the encryption key for existing data: encrypted device secrets require the original key. Keep secrets out of source control and support logs; `docker compose config` without `--quiet` renders them.
+
+The fixed project name `kinan-vps` isolates container/network/named-volume identity from the local and benchmark stacks. Bind data still belongs to this deployment directory; never point it at the local or benchmark data directory. For multiple VPS installations use separate directories, distinct `-p` names consistently, and distinct loopback ports.
+
+```sh
+docker compose --env-file .env.vps -f docker-compose.vps.yml config --quiet
+docker compose --env-file .env.vps -f docker-compose.vps.yml pull
+# Confirm both image revisions match IMAGE_TAG without its sha- prefix:
+docker compose --env-file .env.vps -f docker-compose.vps.yml config --images |
+  grep '^ghcr.io/' |
+  xargs docker image inspect --format '{{json .RepoDigests}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
+docker compose --env-file .env.vps -f docker-compose.vps.yml up -d --no-build --wait
+```
+
+Always use the explicit `--env-file` and standalone `-f`; do not merge this file with the local Compose file. Shell environment values override the env file, so clear stale exported deployment variables before running these commands.
+
+### TLS, MQTT and first operator
+
+Configure an external **host** TLS reverse proxy for `APP_ORIGIN`, forwarding to `127.0.0.1:8080` (or `WEB_PORT`). Preserve the original Host header, support long-lived SSE, disable proxy buffering and use a long read timeout. Terminate HTTPS with a valid certificate; production session cookies are Secure. The web container serves UI and proxies `/api/` internally. API and Redis have no published host ports, and local origin aliases are disabled.
+
+MQTT binds only to `127.0.0.1:1883` (or `MQTT_PORT`). This is plaintext MQTT, **not** an Internet-facing device endpoint. Remote devices need a separately secured TLS MQTT gateway or encrypted tunnel/VPN; do not expose port 1883 publicly. The supplied broker password/ACL files and generation-marker reload watcher are preserved. No Docker socket is mounted. The API runs as root, as in the local stack, to share broker auth files; this is not a rootless hardening configuration.
+
+Create the first operator inside the running API image, against its mounted database:
+
+```sh
+docker compose --env-file .env.vps -f docker-compose.vps.yml exec api bun dist/admin.js create-user operator 'Operator'
+```
+
+The prompt echoes typed input: use a private, non-recorded terminal and a unique strong password. Do not pass passwords in command arguments or shell history. For explicit legacy ownership linking, use the same `exec api bun dist/admin.js` prefix with `link-owner --legacy-uid <uid> --username <username>`. Do not seed demo data in production.
+
+Redis has a ping healthcheck; API and web inherit their image HTTP healthchecks. Mosquitto has no readiness healthcheck and is only ordered as `service_started`. `--wait` therefore does not prove MQTT authentication, ingestion, login or SSE readiness. Verify login through the HTTPS URL, device provisioning and real device telemetry separately. `restart: unless-stopped` restarts exited processes, not containers merely marked unhealthy. This deployment has no benchmark resource cap or proven capacity guarantee.
+
+### Update, backup and rollback
+
+Before updating, record the current tag and both image digests, and back up `.env.vps`, runtime broker files, the entire `data/` directory and the `kinan-vps_mosquitto-data` named volume to secure off-host storage. For a coherent filesystem backup, stop this VPS project during a maintenance window before copying SQLite (including any WAL/SHM files) and broker state, then start it again. Do not copy only a live SQLite main file. An online backup requires SQLite's backup API and coordinated broker-state handling. Protect backups as secrets and test restoration. Never use `down -v` to update.
+
+Set the new published shared tag in `.env.vps`, then repeat `config --quiet`, `pull`, image revision/digest verification and `up -d --no-build --wait` above. Check `ps`, API/broker logs, HTTPS login and telemetry. The API migrates SQLite at startup and creates a pre-schema-change backup, but that is not a complete off-host deployment backup.
+
+For rollback, use the previous shared tag and pull/recreate both app services. A previous binary may not understand the migrated schema: if compatibility is not established, stop the VPS stack and restore the matching pre-upgrade database, broker state and original encryption key before starting the old images. Restoring a backup loses writes made since that backup. Keep broker files compatible with the chosen release and retain old image digests/backups until the upgrade is verified.
+
 ## Simulator
 
 Create a device in the UI, then set its ID, secret, parameter IDs, and credential version in the environment. The simulator publishes MQTT packets rather than calling a cloud service:
