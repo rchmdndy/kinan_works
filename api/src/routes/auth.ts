@@ -2,9 +2,9 @@ import { Elysia } from 'elysia';
 import { z } from 'zod';
 import {
   authenticate,
-  clearedSessionCookies,
   createSession,
-  sessionCookies,
+  CSRF_COOKIE,
+  SESSION_COOKIE,
   validateMutation,
 } from '../auth.js';
 import type { AppDependencies } from '../app.js';
@@ -30,7 +30,7 @@ export function createAuthRoutes({ config, repository }: AppDependencies) {
     config.AUTH_MAX_ATTEMPTS,
   );
   return new Elysia({ prefix: '/api/auth' })
-    .post('/login', async ({ request, body, set }) => {
+    .post('/login', async ({ request, body, set, cookie }) => {
       const limit = limiter.check(clientAddress(request));
       Object.assign(set.headers, limit.headers);
       if (limit.limited) return error(set, 429, 'Too many requests');
@@ -52,11 +52,22 @@ export function createAuthRoutes({ config, repository }: AppDependencies) {
 
       const session = createSession(repository, config, user.id);
       set.headers['Cache-Control'] = 'no-store';
-      set.headers['Set-Cookie'] = sessionCookies(
-        config,
-        session.sessionToken,
-        session.csrfToken,
-      ).join(', ');
+      const options = {
+        path: '/',
+        sameSite: 'strict' as const,
+        secure: config.NODE_ENV === 'production',
+        maxAge: config.SESSION_TTL_MS / 1000,
+      };
+      cookie[SESSION_COOKIE]!.set({
+        ...options,
+        value: session.sessionToken,
+        httpOnly: true,
+      });
+      cookie[CSRF_COOKIE]!.set({
+        ...options,
+        value: session.csrfToken,
+        httpOnly: false,
+      });
       return {
         user: {
           id: user.id,
@@ -66,7 +77,7 @@ export function createAuthRoutes({ config, repository }: AppDependencies) {
         csrfToken: session.csrfToken,
       };
     })
-    .get('/session', ({ request, set }) => {
+    .get('/session', ({ request, set, cookie }) => {
       const session = authenticate(request, repository);
       if (!session)
         return error(
@@ -76,10 +87,28 @@ export function createAuthRoutes({ config, repository }: AppDependencies) {
             ? 'Session expired'
             : 'Authentication required',
         );
+      const replacement = createSession(repository, config, session.user.id);
+      repository.deleteSession(session.tokenHash);
+      const options = {
+        path: '/',
+        sameSite: 'strict' as const,
+        secure: config.NODE_ENV === 'production',
+        maxAge: config.SESSION_TTL_MS / 1000,
+      };
+      cookie[SESSION_COOKIE]!.set({
+        ...options,
+        value: replacement.sessionToken,
+        httpOnly: true,
+      });
+      cookie[CSRF_COOKIE]!.set({
+        ...options,
+        value: replacement.csrfToken,
+        httpOnly: false,
+      });
       set.headers['Cache-Control'] = 'no-store';
-      return { user: session.user };
+      return { user: session.user, csrfToken: replacement.csrfToken };
     })
-    .post('/logout', ({ request, set }) => {
+    .post('/logout', ({ request, set, cookie }) => {
       const session = authenticate(request, repository);
       const validationError = validateMutation(request, session, config);
       if (validationError)
@@ -93,7 +122,8 @@ export function createAuthRoutes({ config, repository }: AppDependencies) {
         );
       repository.deleteSession(session!.tokenHash);
       set.status = 204;
-      set.headers['Set-Cookie'] = clearedSessionCookies(config).join(', ');
+      cookie[SESSION_COOKIE]?.remove();
+      cookie[CSRF_COOKIE]?.remove();
       return '';
     });
 }

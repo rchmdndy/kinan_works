@@ -66,7 +66,11 @@
     sessionBusy = true;
     message = '';
     try {
-      user = (await api<{ user: AuthUser }>('/api/auth/session')).user;
+      const session = await api<{ user: AuthUser; csrfToken: string }>(
+        '/api/auth/session',
+      );
+      setCsrfToken(session.csrfToken);
+      user = session.user;
       await loadDevices();
     } catch (error) {
       if (version === sessionVersion) unauthenticated(error);
