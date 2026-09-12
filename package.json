@@ -5,13 +5,14 @@
   "scripts": {
     "dev": "bun run --cwd api dev & bun run --cwd web dev",
     "build": "bun run --cwd api build && bun run --cwd web build && bun run --cwd simulator build",
-    "test": "bun test --timeout 60000 api/tests web/src/lib simulator/src/index.test.ts",
+    "test": "bun test --timeout 60000 api/tests web/src/lib simulator/src",
     "typecheck": "bun run --cwd api typecheck && bun run --cwd web check && bun run --cwd simulator typecheck",
     "lint": "eslint .",
     "format": "prettier --write . '!**/.benchmark/**' '!**/data/**'",
     "format:check": "prettier --check . '!**/.benchmark/**' '!**/data/**'",
     "admin": "bun --cwd api src/admin.ts",
     "seed:demo": "bun run --cwd api seed:demo",
+    "simulator:web": "bun run --cwd simulator web",
     "prune:dry": "bun scripts/prune.ts",
     "prune:apply": "bun scripts/prune.ts --apply"
   },

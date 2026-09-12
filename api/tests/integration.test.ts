@@ -151,6 +151,20 @@ describe('self-hosted live integration', () => {
       .map((line) => line.split(';')[0])
       .join('; ');
     csrf = login.csrfToken;
+    expect(response.headers.getSetCookie()).toHaveLength(2);
+    expect(cookie).toContain('kinan_session=');
+    expect(cookie).toContain('kinan_csrf=');
+
+    response = await fetch(`http://127.0.0.1:${apiPort}/api/auth/session`, {
+      headers: { Cookie: cookie },
+    });
+    expect(response.status).toBe(200);
+    const restored = (await response.json()) as { csrfToken: string };
+    const restoredCookies = response.headers.getSetCookie();
+    expect(restoredCookies).toHaveLength(2);
+    cookie = restoredCookies.map((line) => line.split(';')[0]).join('; ');
+    csrf = restored.csrfToken;
+
     response = await fetch(`http://127.0.0.1:${apiPort}/api/devices`, {
       method: 'POST',
       headers: {
