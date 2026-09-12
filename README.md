@@ -1,4 +1,4 @@
-# Kinan Works
+# Grow Sense
 
 Self-hosted IoT telemetry console using Bun, SQLite, Redis, Mosquitto, and Svelte. Firebase is not part of the runtime.
 

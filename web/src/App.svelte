@@ -142,11 +142,11 @@
   });
 </script>
 
-<svelte:head><title>Kinan Works | Telemetry</title></svelte:head>
+<svelte:head><title>Grow Sense | Telemetry</title></svelte:head>
 {#if sessionBusy}
   <main class="auth-shell" aria-busy="true">
     <section class="auth-card">
-      <div class="brand-mark">KW</div>
+      <div class="brand-mark">GS</div>
       <div class="spinner"></div>
       <p class="muted">Memeriksa sesi…</p>
     </section>

@@ -19,9 +19,9 @@
 
 <div class="app-layout">
   <aside class="sidebar">
-    <a class="brand" href="#devices" aria-label="Kinan Works"
-      ><span class="brand-mark small">KW</span><span
-        ><strong>Kinan Works</strong><small>Telemetry console</small></span
+    <a class="brand" href="#devices" aria-label="Grow Sense"
+      ><span class="brand-mark small">GS</span><span
+        ><strong>Grow Sense</strong><small>Telemetry console</small></span
       ></a
     >
     <nav aria-label="Navigasi utama">
