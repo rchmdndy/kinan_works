@@ -20,8 +20,8 @@
 
 <main class="auth-shell">
   <section class="auth-card" aria-labelledby="login-title">
-    <div class="brand-mark">KW</div>
-    <p class="auth-rule">KINAN WORKS</p>
+    <div class="brand-mark">GS</div>
+    <p class="auth-rule">GROW SENSE</p>
     <h1 id="login-title">Telemetry console</h1>
     <p class="muted">Masuk untuk memantau perangkat dan data sensor.</p>
     <form onsubmit={submit}>

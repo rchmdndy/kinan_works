@@ -207,7 +207,7 @@ if (import.meta.main) {
       const unit = `/run/systemd/system/${s.slice}`;
       if (existsSync(unit))
         throw new Error('Slice already exists; use check or down, not up');
-      const text = `[Unit]\nDescription=Isolated Kinan benchmark ${s.project}\n[Slice]\nCPUAccounting=yes\nMemoryAccounting=yes\nIOAccounting=yes\nCPUQuota=100%\nMemoryMax=1536M\nMemorySwapMax=0\n`;
+      const text = `[Unit]\nDescription=Isolated Grow Sense benchmark ${s.project}\n[Slice]\nCPUAccounting=yes\nMemoryAccounting=yes\nIOAccounting=yes\nCPUQuota=100%\nMemoryMax=1536M\nMemorySwapMax=0\n`;
       writeFileSync(`${s.dir}/slice.unit`, text, { mode: 0o600 });
       await command([
         'sudo',

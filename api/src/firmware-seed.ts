@@ -56,7 +56,7 @@ export async function seedFirmware(
           {
             id: FIRMWARE_DEVICE_ID,
             ownerUid,
-            label: 'Growth Chamber — original firmware',
+            label: 'Grow Sense Growth Chamber',
             active: true,
             credentialVersion: 1,
             createdAt: now,
