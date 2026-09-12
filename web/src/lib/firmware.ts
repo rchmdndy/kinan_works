@@ -8,7 +8,7 @@ export type FirmwareSnippetOptions = {
 };
 
 export function defaultMqttHost(): string {
-  return typeof window === 'undefined' ? 'localhost' : window.location.hostname;
+  return 'mqtt.growsense.my.id';
 }
 
 export const PLACEHOLDER_SECRET = 'KLIK_TAMPILKAN_SECRET_DULU';
@@ -36,13 +36,15 @@ export function firmwareSnippet(
 
   return `// REFERENSI MQTT — contoh JSON + pseudocode, bukan sketch siap kompilasi.
 // DEVICE: ${device.label} (${device.id})
+const char* api_origin = "https://growsense.my.id";
 const char* mqtt_server = ${json(options.mqttHost)};
 const int mqtt_port = ${options.mqttPort};
 const int mqtt_secure_port = ${options.mqttTlsPort};
 const char* mqtt_user = ${json(`${device.id}-v${device.credentialVersion}`)};
 const char* mqtt_pass = ${json(options.deviceSecret)};
 const char* mqtt_client_id = ${json(device.id)};
-// Produksi: TLS dengan verifikasi CA; jangan cetak secret ke log.
+// Hubungkan melalui TLS pada port 8883 dengan verifikasi CA, bukan MQTT plaintext.
+// mqtt_secure_port adalah port TLS alternatif; jangan cetak secret ke log.
 
 PARAMETER DASHBOARD (ID immutable; label bukan key payload)
 ${parameters.map((p) => `${p.id} | ${p.label} | ${p.type ?? 'nilai'}${p.type === 'control-state' ? ' | boolean' : ` | unit ${p.unit}, precision ${p.points}`}${p.type === 'control-setpoint' ? ` | min ${p.min}, max ${p.max}` : ''}`).join('\n') || '(belum ada parameter)'}

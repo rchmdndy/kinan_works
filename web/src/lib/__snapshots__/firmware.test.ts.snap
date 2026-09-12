@@ -3,13 +3,15 @@
 exports[`credential reference snapshot covers all five topics without a real secret 1`] = `
 "// REFERENSI MQTT — contoh JSON + pseudocode, bukan sketch siap kompilasi.
 // DEVICE: Growth Chamber (growth-chamber-firmware-v1)
+const char* api_origin = "https://growsense.my.id";
 const char* mqtt_server = "localhost";
 const int mqtt_port = 1883;
 const int mqtt_secure_port = 8883;
 const char* mqtt_user = "growth-chamber-firmware-v1-v2";
 const char* mqtt_pass = "KLIK_TAMPILKAN_SECRET_DULU";
 const char* mqtt_client_id = "growth-chamber-firmware-v1";
-// Produksi: TLS dengan verifikasi CA; jangan cetak secret ke log.
+// Hubungkan melalui TLS pada port 8883 dengan verifikasi CA, bukan MQTT plaintext.
+// mqtt_secure_port adalah port TLS alternatif; jangan cetak secret ke log.
 
 PARAMETER DASHBOARD (ID immutable; label bukan key payload)
 parameter_22313672376ff8dc15d3390138ea5469 | tempSensor | nilai | unit °C, precision 1

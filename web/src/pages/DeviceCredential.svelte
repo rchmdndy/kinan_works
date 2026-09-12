@@ -23,7 +23,7 @@
   let portOverride = $state('');
   let tlsPortOverride = $state('');
 
-  const DEFAULT_PORT = 1883;
+  const DEFAULT_PORT = 8883;
   const DEFAULT_TLS_PORT = 8883;
 
   const snippet = $derived(
