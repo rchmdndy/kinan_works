@@ -1,4 +1,7 @@
 import { Elysia } from 'elysia';
+import { createFirmwareRoutes } from './routes/firmware.js';
+import { ControlError, ControlService } from './control.js';
+import { createControlRoutes } from './routes/control.js';
 import { loadConfig } from './config.js';
 import {
   MemoryTelemetryCache,
@@ -23,6 +26,7 @@ export type AppDependencies = {
   repository: Repository;
   cache: TelemetryCache;
   broker: MosquittoFileCredentials;
+  control: ControlService;
 };
 
 function securityHeaders(app: Elysia): Elysia {
@@ -60,9 +64,20 @@ export async function createApp(env = process.env, options: AppOptions = {}) {
   }
 
   const broker = new MosquittoFileCredentials(repository, config);
-  const dependencies: AppDependencies = { config, repository, cache, broker };
+  const control = new ControlService(repository);
+  const dependencies: AppDependencies = {
+    config,
+    repository,
+    cache,
+    broker,
+    control,
+  };
   const app = securityHeaders(new Elysia())
     .onError(({ code, error, set }) => {
+      if (error instanceof ControlError) {
+        set.status = error.status;
+        return { error: error.message };
+      }
       if (code === 'VALIDATION' || code === 'PARSE') {
         set.status = 400;
         return { error: 'Invalid request' };
@@ -86,11 +101,18 @@ export async function createApp(env = process.env, options: AppOptions = {}) {
         return { ok: true, redis: false };
       }
     })
+    .use(createFirmwareRoutes(dependencies))
     .use(createAuthRoutes(dependencies))
     .use(createDeviceRoutes(dependencies))
-    .use(createTelemetryRoutes(dependencies));
+    .use(createTelemetryRoutes(dependencies))
+    .use(createControlRoutes(dependencies));
 
-  const consumer = new MqttTelemetryConsumer(repository, cache, config);
+  const consumer = new MqttTelemetryConsumer(
+    repository,
+    cache,
+    config,
+    control,
+  );
   if (options.mqtt !== false) {
     await broker.sync();
     await consumer.connect();

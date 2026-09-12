@@ -147,8 +147,29 @@ export function createDeviceRoutes(dependencies: AppDependencies) {
         return error(set, 404, 'Device not found');
       const patch: Partial<Device> = { updatedAt: Date.now() };
       if (input.data.label !== undefined) patch.label = input.data.label;
-      if (input.data.parameters !== undefined)
-        patch.parameters = parameterMap(input.data.parameters);
+      if (input.data.parameters !== undefined) {
+        for (const parameter of input.data.parameters) {
+          if (
+            parameter.id &&
+            (!device.parameters[parameter.id] ||
+              (device.parameters[parameter.id]!.type ?? 'nilai') !==
+                parameter.type)
+          )
+            return error(
+              set,
+              400,
+              'Existing parameter IDs and types are immutable; omit ID for a new parameter',
+            );
+        }
+        patch.parameters = parameterMap(
+          input.data.parameters.map((parameter) => ({
+            ...parameter,
+            id:
+              parameter.id ??
+              `parameter_${crypto.randomUUID().replaceAll('-', '')}`,
+          })),
+        );
+      }
       if (input.data.active !== undefined) patch.active = input.data.active;
       const updated = repository.updateDevice(device.id, patch);
       await broker.sync();

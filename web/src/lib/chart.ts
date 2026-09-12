@@ -17,7 +17,11 @@ export function drawChart(
     new Date(sample.timestamp).toLocaleString(),
   );
   const datasets = parameterIds
-    .filter((id) => device.parameters[id])
+    .filter(
+      (id) =>
+        device.parameters[id] &&
+        (device.parameters[id].type ?? 'nilai') === 'nilai',
+    )
     .map((id) => {
       const parameter = device.parameters[id];
       return {
@@ -51,7 +55,11 @@ export function updateChart(
   chart.data.labels = samples.map((sample) =>
     new Date(sample.timestamp).toLocaleString(),
   );
-  const activeIds = parameterIds.filter((id) => device.parameters[id]);
+  const activeIds = parameterIds.filter(
+    (id) =>
+      device.parameters[id] &&
+      (device.parameters[id].type ?? 'nilai') === 'nilai',
+  );
   chart.data.datasets.forEach((dataset, index) => {
     const id = activeIds[index];
     dataset.data = id ? sampleData(samples, id) : [];

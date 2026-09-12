@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import type { ControlService } from './control.js';
 import { connect, type IClientOptions, type MqttClient } from 'mqtt';
 import type { Config } from './config.js';
 import type { TelemetryCache } from './cache.js';
@@ -18,6 +19,7 @@ export class MqttTelemetryConsumer implements TelemetryConsumer {
     private readonly repository: Repository,
     private readonly cache: TelemetryCache,
     private readonly config: Config,
+    private readonly control?: ControlService,
   ) {}
 
   async connect(): Promise<void> {
@@ -35,12 +37,48 @@ export class MqttTelemetryConsumer implements TelemetryConsumer {
     const client = connect(this.config.MQTT_URL, options);
     this.client = client;
     client.on('error', (error) => console.error('mqtt error', error.message));
-    client.on('message', (topic, payload) => {
-      void this.consume(topic, payload);
+    client.on('message', (topic, payload, packet) => {
+      const match =
+        /^devices\/([a-zA-Z0-9_-]{8,64})\/(state|availability|command-results)$/.exec(
+          topic,
+        );
+      if (match)
+        this.control?.consume(match[1]!, match[2]!, payload, packet.retain);
+      else if (!packet.retain) void this.consume(topic, payload);
     });
+    client.on('offline', () => {
+      this.control?.disconnect();
+    });
+    client.on('close', () => {
+      this.control?.disconnect();
+    });
+    if (this.control)
+      this.control.publisher = (deviceId, command) => {
+        if (!client.connected || client.disconnecting)
+          throw new Error('Broker offline');
+        // Submit synchronously only while connected. PUBACK is transport-only.
+        client.publish(
+          `devices/${deviceId}/commands`,
+          JSON.stringify(command),
+          { qos: 1, retain: false },
+          (error) => {
+            if (error)
+              console.error('command transport uncertain', command.commandId);
+          },
+        );
+      };
     client.on('connect', () => {
       void client
-        .subscribeAsync('devices/+/+/telemetry', { qos: 1 })
+        .subscribeAsync(
+          [
+            'devices/+/+/telemetry',
+            'devices/+/telemetry',
+            'devices/+/state',
+            'devices/+/availability',
+            'devices/+/command-results',
+          ],
+          { qos: 1 },
+        )
         .catch((error) =>
           console.error('mqtt subscribe failed', error.message),
         );
@@ -65,6 +103,8 @@ export class MqttTelemetryConsumer implements TelemetryConsumer {
     return this.client?.connected === true;
   }
   async close(): Promise<void> {
+    this.control?.disconnect();
+    if (this.control) this.control.publisher = null;
     if (this.client) await this.client.endAsync(true);
   }
 
@@ -73,12 +113,12 @@ export class MqttTelemetryConsumer implements TelemetryConsumer {
       if (payload.byteLength > this.config.TELEMETRY_MAX_BYTES)
         throw new Error('payload too large');
       const topicMatch =
-        /^devices\/([a-zA-Z0-9_-]{8,64})\/([1-9][0-9]*)\/telemetry$/.exec(
+        /^devices\/([a-zA-Z0-9_-]{8,64})\/(?:([1-9][0-9]*)\/)?telemetry$/.exec(
           topic,
         );
       if (!topicMatch) throw new Error('invalid topic');
       const deviceId = topicMatch[1]!;
-      const topicVersion = Number(topicMatch[2]);
+      const topicVersion = topicMatch[2] ? Number(topicMatch[2]) : undefined;
       const parsed = telemetrySchema.safeParse(
         JSON.parse(payload.toString('utf8')),
       );
@@ -88,8 +128,9 @@ export class MqttTelemetryConsumer implements TelemetryConsumer {
       if (
         !device ||
         !device.active ||
-        device.credentialVersion !== topicVersion ||
-        packet.credentialVersion !== topicVersion
+        (topicVersion !== undefined &&
+          device.credentialVersion !== topicVersion) ||
+        packet.credentialVersion !== device.credentialVersion
       )
         throw new Error('inactive or stale credentials');
       if (

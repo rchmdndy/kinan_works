@@ -16,7 +16,11 @@ import {
   validateTelemetryParameters,
 } from '../src/repository.js';
 import { isConfigured, loadConfig } from '../src/config.js';
-import { createDeviceSchema, telemetrySchema } from '../src/validation.js';
+import {
+  createDeviceSchema,
+  telemetrySchema,
+  updateDeviceSchema,
+} from '../src/validation.js';
 import type { Device, EncryptedSecret } from '../src/types.js';
 const key = new Uint8Array(32).fill(7);
 const parameters = parameterMap([
@@ -134,13 +138,13 @@ describe('security and SQLite primitives', () => {
     repo.saveDeviceBundle(device('legacy-device'), secret);
     expect(repo.getDevice('legacy-device')).toEqual(device('legacy-device'));
     expect(repo.listDevices('owner-a')).toHaveLength(1);
-    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 3 });
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 5 });
     const after = db
       .query(
         "SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY name",
       )
       .all();
-    expect(after).toEqual(before);
+    expect(after).toEqual(expect.arrayContaining(before));
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -274,4 +278,75 @@ describe('security and SQLite primitives', () => {
       }),
     ).toThrow('valid base64');
   });
+});
+
+test('exact parameter types, finite ordered bounds, switch formatting and new patch IDs', () => {
+  const base = { label: 'P', unit: '', points: 0 };
+  const valid = (p: object) =>
+    createDeviceSchema.safeParse({ label: 'D', parameters: [p] }).success;
+  expect(valid(base)).toBe(true);
+  expect(valid({ ...base, type: 'control-state' })).toBe(true);
+  expect(valid({ ...base, type: 'control-state', unit: 'C' })).toBe(false);
+  expect(valid({ ...base, type: 'mode' })).toBe(false);
+  for (const [min, max] of [
+    [0, 0],
+    [2, 1],
+    [NaN, 1],
+    [0, Infinity],
+  ])
+    expect(valid({ ...base, type: 'control-setpoint', min, max })).toBe(false);
+  expect(valid({ ...base, type: 'control-setpoint', min: -10, max: 10 })).toBe(
+    true,
+  );
+  expect(
+    updateDeviceSchema.safeParse({ parameters: [base, base] }).success,
+  ).toBe(true);
+  expect(
+    validateTelemetryParameters(
+      { sensor: { status: 'ok', value: 3 } },
+      parameterMap([
+        { ...base, id: 'sensor' },
+        { ...base, id: 'switch', type: 'control-state' },
+      ]),
+    ),
+  ).toBe(true);
+});
+
+test('v4 migration preserves existing parameter IDs and numeric history', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kinan-v4-'));
+  const path = join(dir, 'test.sqlite');
+  const db = openDatabase(path);
+  const repo = new Repository(db);
+  repo.saveDeviceBundle(device('migration-device'), secret);
+  const legacy = {
+    temperature: {
+      id: 'temperature',
+      label: 'Old sensor',
+      unit: 'C',
+      points: 2,
+    },
+  };
+  db.query('UPDATE devices SET parameters_json = ? WHERE id = ?').run(
+    JSON.stringify(legacy),
+    'migration-device',
+  );
+  const packet = {
+    timestamp: 123,
+    writeId: 'historical',
+    credentialVersion: 1,
+    values: { temperature: { status: 'ok' as const, value: 22 } },
+  };
+  repo.saveTelemetry('migration-device', packet);
+  db.exec('PRAGMA user_version = 4');
+  repo.close();
+  const migrated = new Repository(openDatabase(path));
+  expect(
+    migrated.getDevice('migration-device')?.parameters.temperature,
+  ).toEqual({ ...legacy.temperature, type: 'nilai' });
+  expect(migrated.getLatest('migration-device')).toEqual(packet);
+  expect(migrated.getHistory('migration-device', 0, 1000, 10)).toEqual([
+    packet,
+  ]);
+  migrated.close();
+  rmSync(dir, { recursive: true, force: true });
 });

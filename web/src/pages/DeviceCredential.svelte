@@ -36,6 +36,11 @@
   );
 
   async function revealSecret() {
+    if (secret) {
+      secret = '';
+      copyStatus = '';
+      return;
+    }
     secretBusy = true;
     message = '';
     copyStatus = '';
@@ -81,8 +86,12 @@
     <div>
       <h2 id="credential-title">Snippet kredensial firmware</h2>
       <p>
-        Salin blok berikut ke firmware perangkat — nilai variabel sudah terisi
-        sesuai perangkat ini. Secret hanya tampil setelah Anda tampilkan.
+        Referensi lima topik MQTT: telemetry untuk sensor nilai, state untuk
+        seluruh kontrol aktual, availability online/LWT, langganan commands, dan
+        command-results setelah validasi atau penerapan. Contoh JSON dan
+        pseudocode ini bukan sketch siap kompilasi; petakan sumber lokal ke ID
+        parameter dashboard yang tetap. Nilai contoh bukan pembacaan perangkat.
+        Secret hanya tampil setelah Anda tampilkan.
       </p>
     </div>
     <button

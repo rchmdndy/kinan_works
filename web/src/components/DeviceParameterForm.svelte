@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { DeviceDraftErrors, ParameterDraft } from '../lib/device-form';
-
   let {
     parameters = $bindable(),
     errors,
@@ -18,88 +17,90 @@
   } = $props();
 </script>
 
-<div class={immutableIds ? 'table-wrap' : 'parameter-list'}>
-  {#each parameters as parameter, index (parameter.id ?? index)}
-    {#if immutableIds}
-      <div class="parameter-table" class:table-head={false}>
-        <input aria-label="ID parameter" value={parameter.id} readonly />
-        <input
-          aria-label="Label parameter"
-          bind:value={parameter.label}
-          maxlength="100"
-          disabled={busy}
-        />
-        <input
-          aria-label="Satuan parameter"
-          bind:value={parameter.unit}
-          maxlength="32"
-          disabled={busy}
-        />
-        <input
-          aria-label="Desimal parameter"
-          type="number"
-          min="0"
-          max="10"
-          step="1"
-          bind:value={parameter.points}
-          disabled={busy}
-        />
-        <button
-          class="icon-button"
-          type="button"
-          aria-label={`Hapus ${parameter.label}`}
-          onclick={() => onremove(index)}
-          disabled={busy || parameters.length === 1}>×</button
+<p>
+  Default nilai untuk sensor numerik. ID dan tipe tidak dapat diubah setelah
+  disimpan; firmware memakai ID yang sama.
+</p>
+<div class="parameter-list">
+  {#each parameters as parameter, index (parameter)}
+    <fieldset class="parameter-card">
+      <legend>Parameter {index + 1}</legend>
+      {#if immutableIds && parameter.id}<label
+          >ID parameter<input value={parameter.id} readonly /></label
+        >{/if}
+      <div class="parameter-fields">
+        <label
+          >Tipe<select
+            bind:value={parameter.type}
+            disabled={busy || Boolean(parameter.id)}
+          >
+            <option value="nilai">nilai — sensor numerik</option>
+            <option value="control-state"
+              >control-state — sakelar boolean</option
+            >
+            <option value="control-setpoint"
+              >control-setpoint — target numerik</option
+            >
+          </select></label
         >
-      </div>
-    {:else}
-      <fieldset class="parameter-card">
-        <legend>Parameter {index + 1}</legend>
-        <div class="parameter-fields">
+        <label
+          >Label<input
+            bind:value={parameter.label}
+            maxlength="100"
+            disabled={busy}
+          /></label
+        >
+        {#if parameter.type !== 'control-state'}
           <label
-            >Label <span aria-hidden="true">*</span><input
-              bind:value={parameter.label}
-              maxlength="100"
-              placeholder="Suhu"
-              aria-invalid={Boolean(errors?.parameter[index]?.label)}
-              disabled={busy}
-            />{#if errors?.parameter[index]?.label}<small class="field-error"
-                >{errors.parameter[index].label}</small
-              >{/if}</label
-          ><label
             >Satuan<input
               bind:value={parameter.unit}
               maxlength="32"
-              placeholder="°C"
-              aria-invalid={Boolean(errors?.parameter[index]?.unit)}
               disabled={busy}
-            />{#if errors?.parameter[index]?.unit}<small class="field-error"
-                >{errors.parameter[index].unit}</small
-              >{/if}</label
-          ><label
-            >Desimal <span aria-hidden="true">*</span><input
-              bind:value={parameter.points}
+            /></label
+          >
+          <label
+            >Desimal<input
               type="number"
               min="0"
               max="10"
               step="1"
-              aria-invalid={Boolean(errors?.parameter[index]?.points)}
+              bind:value={parameter.points}
               disabled={busy}
-            />{#if errors?.parameter[index]?.points}<small class="field-error"
-                >{errors.parameter[index].points}</small
-              >{/if}</label
+            /></label
           >
-        </div>
-        <button
-          class="icon-button"
-          type="button"
-          aria-label={`Hapus parameter ${index + 1}`}
-          title="Hapus parameter"
-          onclick={() => onremove(index)}
-          disabled={busy || parameters.length === 1}>×</button
-        >
-      </fieldset>
-    {/if}
+        {/if}
+        {#if parameter.type === 'control-setpoint'}
+          <label
+            >Minimum<input
+              type="number"
+              step="any"
+              bind:value={parameter.min}
+              disabled={busy}
+              required
+            /></label
+          >
+          <label
+            >Maksimum<input
+              type="number"
+              step="any"
+              bind:value={parameter.max}
+              disabled={busy}
+              required
+            /></label
+          >
+        {/if}
+      </div>
+      {#each Object.values(errors?.parameter[index] ?? {}) as error (error)}<small
+          class="field-error">{error}</small
+        >{/each}
+      <button
+        class="icon-button"
+        type="button"
+        aria-label={`Hapus parameter ${index + 1}`}
+        onclick={() => onremove(index)}
+        disabled={busy || parameters.length === 1}>×</button
+      >
+    </fieldset>
   {/each}
 </div>
 {#if errors?.parameters}<p class="field-error">{errors.parameters}</p>{/if}
@@ -107,5 +108,5 @@
   class="add-row"
   type="button"
   onclick={onadd}
-  disabled={busy || parameters.length >= 100}>＋ Tambah parameter</button
+  disabled={busy || parameters.length >= 100}>Tambah parameter</button
 >

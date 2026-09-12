@@ -1,4 +1,7 @@
 export type ParameterDraft = {
+  type?: 'nilai' | 'control-state' | 'control-setpoint';
+  min?: number | null;
+  max?: number | null;
   label: string;
   unit: string;
   points: number | null | undefined;
@@ -7,7 +10,12 @@ export type ParameterDraft = {
 export type DeviceDraftErrors = {
   label?: string;
   parameters?: string;
-  parameter: Array<{ label?: string; unit?: string; points?: string }>;
+  parameter: Array<{
+    label?: string;
+    unit?: string;
+    points?: string;
+    bounds?: string;
+  }>;
 };
 
 export function validateDeviceDraft(
@@ -30,12 +38,21 @@ export function validateDeviceDraft(
       errors.parameter[index].label = 'Label wajib diisi.';
     else if (cleanParameterLabel.length > 100)
       errors.parameter[index].label = 'Label maksimal 100 karakter.';
-    if (parameter.unit.trim().length > 32)
+    if (parameter.type !== 'control-state' && parameter.unit.trim().length > 32)
       errors.parameter[index].unit = 'Satuan maksimal 32 karakter.';
     if (
-      !Number.isInteger(parameter.points) ||
-      Number(parameter.points) < 0 ||
-      Number(parameter.points) > 10
+      parameter.type === 'control-setpoint' &&
+      (!Number.isFinite(parameter.min) ||
+        !Number.isFinite(parameter.max) ||
+        Number(parameter.min) >= Number(parameter.max))
+    )
+      errors.parameter[index].bounds =
+        'Min dan max wajib valid; min harus lebih kecil.';
+    if (
+      parameter.type !== 'control-state' &&
+      (!Number.isInteger(parameter.points) ||
+        Number(parameter.points) < 0 ||
+        Number(parameter.points) > 10)
     ) {
       errors.parameter[index].points = 'Gunakan bilangan bulat 0–10.';
     }
@@ -59,8 +76,12 @@ export function normalizeDeviceDraft(
     label: label.trim(),
     parameters: parameters.map((parameter) => ({
       label: parameter.label.trim(),
-      unit: parameter.unit.trim(),
-      points: Number(parameter.points),
+      type: parameter.type ?? 'nilai',
+      unit: parameter.type === 'control-state' ? '' : parameter.unit.trim(),
+      points: parameter.type === 'control-state' ? 0 : Number(parameter.points),
+      ...(parameter.type === 'control-setpoint'
+        ? { min: Number(parameter.min), max: Number(parameter.max) }
+        : {}),
     })),
   };
 }

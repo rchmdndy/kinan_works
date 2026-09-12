@@ -9,6 +9,55 @@ Self-hosted IoT telemetry console using Bun, SQLite, Redis, Mosquitto, and Svelt
 - Mosquitto has anonymous access disabled. Each active device uses its device ID as MQTT username and its revealable encrypted secret as password, and may publish only `devices/<deviceId>/<credentialVersion>/telemetry`. The API independently validates device active state, topic/payload credential version, timestamp skew, parameter set, and idempotent write ID.
 - Human access uses local username/password with Argon2id and strict same-origin, HttpOnly cookie sessions. State-changing requests require the cookie-backed CSRF token. There is no public sign-up.
 
+## Five-topic device control
+
+The control protocol uses `devices/<id>/telemetry`, `commands`, `command-results`, `state`, and `availability` (each suffix is a separate topic under the same device prefix). Commands, results and telemetry use QoS 1, never retained. State and availability use QoS 1 with retention. Devices subscribe only to their own commands and publish only their own four reporting topics; the API has the inverse policy.
+
+**Credentials:** new control clients use MQTT username `<id>-v<credentialVersion>` and the existing device secret. Version-scoped usernames remove old connections' control permissions when broker ACL reload completes. Legacy username `<id>` remains telemetry-only on the old versioned topic for existing firmware and benchmarks. Rotation keeps device and parameter IDs unchanged. Allow the broker watcher to apply policy changes; MQTT authorization changes are not instantaneous. Never expose the plaintext broker listener publicly. Use `mqtts://` and trusted CA certificates for external device connections; the simulator accepts `SIMULATOR_MQTT_CA_PATH` and always verifies certificates.
+
+Dashboard parameters are authoritative and have exactly three types: `nilai` (numeric sensor), `control-state` (boolean switch), and `control-setpoint` (numeric target with finite `min < max`). There is no mode control or separate device-advertised capability list. Server-generated parameter IDs and saved types are immutable; firmware uses those same IDs. Labels, units and precision remain editable; switches have no unit or decimal inputs. Setpoint bounds are editable. New parameters default to `nilai`; existing parameters migrate to `nilai` without changing IDs or history. To add a parameter through PATCH, omit its ID; existing IDs cannot be reassigned to another type. Removed parameters are not reused and their history is not deleted.
+
+All control payloads carry `credentialVersion`, millisecond `timestamp`, and UUID `connectionId`. State additionally carries monotonic per-connection `revision` and up to 100 unique `parameters: [{id, value}]` reporting actual control values only. Labels/types/bounds come from the dashboard, never from state. Commands carry UUID `commandId`, `parameterId`, boolean or numeric `value`, expected `revision`, and `expiresAt` (10 seconds after issue). Results carry `commandId`, `status` (`succeeded` or `rejected`) and optional `reason`. Availability carries boolean `online`; the retained offline Last Will timestamp is connection preparation time, not observed disconnection time. Numeric telemetry, charts and exports include only `nilai` parameters, never requested targets or control feedback.
+
+The device must reject retained, expired, stale-connection, stale-revision, and invalid-value commands and deduplicate IDs. The simulator does so before changing actual state. The API permits one pending command per device. Broker PUBACK is not execution success. Timeout becomes **unknown**, never “not executed”; a late matching result can resolve it. Actual state is stored separately and never inferred from requested values or results. The API does not intentionally queue offline commands; MQTT QoS retransmissions can still occur after transport disruption, so device expiry/deduplication remains mandatory. A retained online message alone cannot enable commands: a fresh non-retained heartbeat and matching state are required (45-second freshness limit).
+
+Session-authenticated endpoints are `GET /api/devices/:id/control`, `GET /api/devices/:id/control/events` (SSE), and CSRF-protected `POST /api/devices/:id/commands` with `{commandId, parameterId, value}`. Ownership is enforced; SSE rechecks sessions and ownership every second. Retrying the same ID/body returns the recorded command without publishing again. The realtime page uses same-origin HTTPS/API/SSE, never browser MQTT credentials. SQLite migration v4 adds control snapshots and command records; additive v5 defaults existing parameter types to `nilai` without replacing tables or history. Run one API control consumer per database; multi-instance command arbitration is not supported yet. Command history currently has no automatic retention policy (the UI/API show the latest 50 records).
+
+### Original Growth Chamber firmware
+
+`firmware/sketch_sep10a/sketch_sep10a.ino` preserves the original variables, defaults (`setpointTemp = 25`, `setpointRH = 65`, `systemRunning = false`), sensor reads, fuzzy/PWM/relay logic, touchscreen behavior and pins (RPWM 25, LPWM 26, relay 32, I²C 21/22, SHT31 0x45). `wifiOnline` remains the original local UI toggle, not connectivity feedback or an actuator. Only platform configuration/transport is added; remote commands update the original target/run variables and the existing loop applies outputs. A successful result confirms variable acceptance, **not physical actuator feedback**. Local touchscreen start retains its original one-second relay test; remote start does not add that test. Networking can block the loop during reconnect/publish; this is not a real-time safety controller or a new network-loss failsafe.
+
+Create the dedicated profile using the demo account (`test@skripsi.com`) on the initialized application's environment and database:
+
+```sh
+bun api/src/firmware-seed.ts
+# With the local Compose database/environment:
+docker compose exec api bun dist/firmware-seed.js
+```
+
+To deliberately assign it to another existing active account, pass `FIRMWARE_OWNER_ID`. This does not run the demo seed, reset history, create an owner or replace unrelated devices. A matching ownership marker makes reruns idempotent; conflicting existing identities fail. Profile source names map to stable server-generated parameter IDs. `GET /api/firmware/growth-chamber-firmware-v1/config` requires `Authorization: Bearer <device-secret>` (not a browser login), is rate-limited and returns a SHA-256 metadata revision, credential version and the five source mappings. Missing/rekeyed/extra parameters fail closed. Configuration refresh never overwrites live targets or boot defaults.
+
+Copy `firmware/sketch_sep10a/platform_config.example.h` to the gitignored `platform_config.h`; provision Wi-Fi, the dedicated device secret, HTTPS API origin, TLS MQTT hostname/port and trusted PEM root CA(s). Both transports verify certificates; time synchronization must succeed. The supplied local broker is plaintext loopback-only, so an external TLS endpoint or secured gateway is required; do not expose port 1883. Secret rotation requires reprovisioning the firmware secret. Never paste secrets into committed files or compiler logs.
+
+Compile with ESP32 Arduino core 3.x, ArduinoMqttClient, ArduinoJson 7, Adafruit SHT31/BusIO, eFLL and TFT_eSPI. Preserve the board's existing TFT_eSPI display/touch setup; no display pins or calibration are inferred by the platform adapter. No flashing or physical output testing is part of this implementation.
+
+### Simulator scenarios
+
+Use a dedicated test device, not a production actuator. No scenario stops containers or changes services.
+
+```sh
+SIMULATOR_DEVICE_ID=<id> SIMULATOR_DEVICE_SECRET=<secret> \
+SIMULATOR_CREDENTIAL_VERSION=1 SIMULATOR_PARAMETERS_FILE=/absolute/path/device.json \
+SIMULATOR_MQTT_URL=mqtt://localhost:1883 SIMULATOR_INTERVAL_MS=1000 \
+SIMULATOR_SCENARIO=normal bun simulator/src/index.ts
+```
+
+Save the selected dashboard device JSON (its `parameters` map, or the map itself) to `SIMULATOR_PARAMETERS_FILE`. The simulator validates IDs/types/bounds and uses no hardcoded control IDs. Reload the file/restart the simulator after changing definitions. `SIMULATOR_PARAMETER_IDS` remains a sensor-only legacy option; it never creates controls.
+
+Select `normal` (successful commands), `reject` (simulated interlock), `delayed` (15-second delayed result after execution), `no-response` (execution with no result), `clean-offline` (offline publish after three cycles), `abrupt-offline` (socket loss and broker Last Will after three cycles), or `reconnect` (socket loss, eight-second pause, new connection and state snapshot). Reconnect currently starts a fresh simulated device with default control values; no physical persistence is claimed. SIGINT/SIGTERM publishes offline when connected. Switches default off; setpoints default to their dashboard minimum. Heartbeat interval must be 100–30000 ms.
+
+`bun test api/tests/control.test.ts` deterministically exercises duplicate IDs, expired commands, invalid values, retained-command rejection, concurrent-command rejection, stale revisions, timeout/late results, retained recovery and credential rotation. Network scenarios above are selectable manual integration exercises, not a claim of exhaustive real-world coverage. Deduplication is process-local in the simulator and bounded to 1000 results; connection IDs invalidate commands after restart. Malformed commands with no valid correlation envelope are discarded without a result.
+
 ## Setup
 
 ```sh
@@ -21,7 +70,7 @@ docker compose up --build
 
 Open `http://localhost:5173`. Services bind their public ports only to localhost. Docker Compose does not mount the Docker socket. The API writes Mosquitto password and ACL files atomically; the broker-side watcher reloads them without giving the API a signal/socket capability.
 
-Create the first local operator explicitly; the command prompts for a password and never prints it:
+Create the first local operator explicitly. The readline password prompt **echoes input in a terminal**; use a private terminal without recording or screen sharing. Use a unique strong password (minimum eight characters):
 
 ```sh
 bun run admin create-user <username> [display-name]
@@ -34,6 +83,18 @@ bun run admin link-owner --legacy-uid <legacy-uid> --username <username>
 ```
 
 Existing Firebase data, service accounts, and encryption keys are not read, deleted, or written by this runtime. Retain them as rollback material outside the application flow.
+
+## Local UI still shows old code
+
+The default `docker-compose.yml` builds local sources; it does not pull the GHCR app images or bind-mount source code. Editing files or running `docker compose restart` does not rebuild the compiled UI. From the repository, rebuild and recreate the affected service:
+
+```sh
+docker compose up -d --build web
+# If API sources also changed:
+docker compose up -d --build api web
+```
+
+Then reload the browser (hard refresh if needed). Check that the browser URL targets this stack, not another project or proxy. `docker compose pull` alone cannot incorporate local edits.
 
 ## Simulator
 

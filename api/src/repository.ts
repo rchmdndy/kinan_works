@@ -1,9 +1,20 @@
 import { Database as SqliteDatabase } from 'bun:sqlite';
 import { and, asc, desc, eq, gte, gt, lt, lte, sql } from 'drizzle-orm';
 import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
-import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname } from 'node:path';
 import * as schema from './schema.js';
+import type {
+  Availability,
+  DeviceState,
+  StoredCommand,
+} from './control-contract.js';
 import type {
   Device,
   EncryptedSecret,
@@ -14,7 +25,7 @@ import type {
   TelemetryPacket,
 } from './types.js';
 
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 5;
 type DrizzleDatabase = BunSQLiteDatabase<typeof schema>;
 type StoredDevice = typeof schema.devices.$inferSelect;
 type StoredUser = typeof schema.users.$inferSelect;
@@ -48,10 +59,19 @@ function databaseVersion(sqlite: SqliteDatabase): number {
 
 export function backupDatabase(path: string): string | null {
   if (path === ':memory:' || !existsSync(path)) return null;
-  const backupPath = `${path}.backup-${new Date().toISOString().replaceAll(':', '-')}`;
-  copyFileSync(path, backupPath);
-  chmodSync(backupPath, 0o600);
-  return backupPath;
+  const directory = mkdtempSync(
+    `${path}.backup-${new Date().toISOString().replaceAll(':', '-')}-`,
+  );
+  chmodSync(directory, 0o700);
+  const backupPath = `${directory}/snapshot.sqlite`;
+  const source = new SqliteDatabase(path, { readonly: true, strict: true });
+  try {
+    // SQLite serialization includes committed WAL pages, unlike copying the file.
+    writeFileSync(backupPath, source.serialize(), { mode: 0o600, flag: 'wx' });
+    return backupPath;
+  } finally {
+    source.close();
+  }
 }
 
 // Existing deployments are versioned by PRAGMA user_version. These DDL migrations
@@ -89,6 +109,30 @@ function migrate(sqlite: SqliteDatabase): void {
     CREATE TABLE telemetry_latest (device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, write_id TEXT NOT NULL, timestamp INTEGER NOT NULL, credential_version INTEGER NOT NULL, values_json TEXT NOT NULL, received_at INTEGER NOT NULL);
     PRAGMA user_version = 3;
   `);
+  if (version < 4)
+    sqlite.exec(`
+    CREATE TABLE device_control (device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, state_json TEXT, availability_json TEXT);
+    CREATE TABLE device_commands (id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL, status TEXT NOT NULL, packet_json TEXT NOT NULL);
+    CREATE INDEX device_commands_device ON device_commands(device_id, expires_at DESC);
+    PRAGMA user_version = 4;
+  `);
+  if (version < 5) {
+    const rows = sqlite
+      .query('SELECT id, parameters_json FROM devices')
+      .all() as { id: string; parameters_json: string }[];
+    for (const row of rows) {
+      const parameters = JSON.parse(row.parameters_json) as Record<
+        string,
+        Parameter
+      >;
+      for (const parameter of Object.values(parameters))
+        parameter.type ??= 'nilai';
+      sqlite
+        .query('UPDATE devices SET parameters_json = ? WHERE id = ?')
+        .run(JSON.stringify(parameters), row.id);
+    }
+    sqlite.exec('PRAGMA user_version = 5');
+  }
 }
 
 export function openDatabase(
@@ -137,7 +181,7 @@ function deviceToRow(
     credentialVersion: device.credentialVersion,
     createdAt: device.createdAt,
     updatedAt: device.updatedAt,
-    parameters: device.parameters,
+    parameters: parameterMap(Object.values(device.parameters)),
     secretIv: secret.iv,
     secretCiphertext: secret.ciphertext,
   };
@@ -151,7 +195,7 @@ function rowToDevice(row: StoredDevice): Device {
     credentialVersion: row.credentialVersion,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    parameters: row.parameters,
+    parameters: parameterMap(Object.values(row.parameters)),
   };
 }
 function rowToPacket(
@@ -249,6 +293,79 @@ export class Repository {
       .prepare();
   }
 
+  getControl(deviceId: string): {
+    state: DeviceState | null;
+    availability: Availability | null;
+  } {
+    const row = this.sqlite
+      .query(
+        'SELECT state_json, availability_json FROM device_control WHERE device_id = ?',
+      )
+      .get(deviceId) as {
+      state_json: string | null;
+      availability_json: string | null;
+    } | null;
+    return {
+      state: row?.state_json ? JSON.parse(row.state_json) : null,
+      availability: row?.availability_json
+        ? JSON.parse(row.availability_json)
+        : null,
+    };
+  }
+  saveControl(
+    deviceId: string,
+    field: 'state' | 'availability',
+    packet: DeviceState | Availability,
+  ): void {
+    const column = field === 'state' ? 'state_json' : 'availability_json';
+    this.sqlite
+      .query(
+        `INSERT INTO device_control(device_id, ${column}) VALUES (?, ?) ON CONFLICT(device_id) DO UPDATE SET ${column} = excluded.${column}`,
+      )
+      .run(deviceId, JSON.stringify(packet));
+  }
+  getCommand(id: string): StoredCommand | null {
+    const row = this.sqlite
+      .query('SELECT packet_json FROM device_commands WHERE id = ?')
+      .get(id) as { packet_json: string } | null;
+    return row ? JSON.parse(row.packet_json) : null;
+  }
+  saveCommand(command: StoredCommand): void {
+    this.sqlite
+      .query(
+        'INSERT INTO device_commands(id, device_id, expires_at, status, packet_json) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, packet_json = excluded.packet_json',
+      )
+      .run(
+        command.commandId,
+        command.deviceId,
+        command.expiresAt,
+        command.status,
+        JSON.stringify(command),
+      );
+  }
+  listCommands(deviceId: string): StoredCommand[] {
+    return (
+      this.sqlite
+        .query(
+          'SELECT packet_json FROM device_commands WHERE device_id = ? ORDER BY expires_at DESC LIMIT 50',
+        )
+        .all(deviceId) as { packet_json: string }[]
+    ).map((row) => JSON.parse(row.packet_json));
+  }
+  expireCommands(now = Date.now()): void {
+    for (const row of this.sqlite
+      .query(
+        "SELECT packet_json FROM device_commands WHERE status = 'pending' AND expires_at <= ?",
+      )
+      .all(now) as { packet_json: string }[]) {
+      const command: StoredCommand = JSON.parse(row.packet_json);
+      this.saveCommand({
+        ...command,
+        status: 'unknown',
+        reason: 'Execution outcome unknown; no result before expiry',
+      });
+    }
+  }
   close(): void {
     this.sqlite.close();
   }
@@ -285,7 +402,7 @@ export class Repository {
           credentialVersion: row.credentialVersion,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
-          parameters: row.parameters,
+          parameters: parameterMap(Object.values(row.parameters)),
           secretIv: row.secretIv,
           secretCiphertext: row.secretCiphertext,
         },
@@ -623,7 +740,12 @@ export function importLegacyMetadata(
         .get();
       const incoming = deviceToRow(device, secret);
       if (existing) {
-        if (stableJson(existing) !== stableJson(incoming))
+        if (
+          stableJson({
+            ...existing,
+            parameters: parameterMap(Object.values(existing.parameters)),
+          }) !== stableJson(incoming)
+        )
           throw new Error(
             `SQLite conflict for existing device ${id}; refusing to overwrite`,
           );
@@ -670,7 +792,10 @@ export function parameterMap(
   parameters: Parameter[],
 ): Record<string, Parameter> {
   return Object.fromEntries(
-    parameters.map((parameter) => [parameter.id, parameter]),
+    parameters.map((parameter) => [
+      parameter.id,
+      { ...parameter, type: parameter.type ?? 'nilai' },
+    ]),
   );
 }
 export function validateTelemetryParameters(
@@ -679,7 +804,11 @@ export function validateTelemetryParameters(
 ): boolean {
   const ids = Object.keys(values);
   return (
-    ids.length === Object.keys(parameters).length &&
-    ids.every((id) => id in parameters)
+    ids.length ===
+      Object.values(parameters).filter((p) => (p.type ?? 'nilai') === 'nilai')
+        .length &&
+    ids.every(
+      (id) => parameters[id] && (parameters[id].type ?? 'nilai') === 'nilai',
+    )
   );
 }

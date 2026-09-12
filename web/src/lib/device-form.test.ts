@@ -26,7 +26,7 @@ test('device draft validates bounds and normalizes API payload', () => {
     ]),
   ).toEqual({
     label: 'Stasiun',
-    parameters: [{ label: 'Suhu', unit: '°C', points: 2 }],
+    parameters: [{ type: 'nilai', label: 'Suhu', unit: '°C', points: 2 }],
   });
 });
 

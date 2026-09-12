@@ -8,7 +8,7 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import type { Parameter, SensorValue } from './types.js';
 
-// This schema describes the deployed v3 SQLite database. The hand-written
+// This schema describes the versioned SQLite database. The hand-written
 // migrations in repository.ts remain authoritative for existing installations.
 export const devices = sqliteTable(
   'devices',
@@ -108,3 +108,35 @@ export const telemetryLatest = sqliteTable('telemetry_latest', {
     .notNull(),
   receivedAt: integer('received_at').notNull(),
 });
+
+export const deviceControl = sqliteTable('device_control', {
+  deviceId: text('device_id')
+    .primaryKey()
+    .references(() => devices.id, { onDelete: 'cascade' }),
+  state: text('state_json', { mode: 'json' }).$type<
+    import('./control-contract.js').DeviceState
+  >(),
+  availability: text('availability_json', { mode: 'json' }).$type<
+    import('./control-contract.js').Availability
+  >(),
+});
+export const deviceCommands = sqliteTable(
+  'device_commands',
+  {
+    id: text('id').primaryKey(),
+    deviceId: text('device_id')
+      .notNull()
+      .references(() => devices.id, { onDelete: 'cascade' }),
+    expiresAt: integer('expires_at').notNull(),
+    status: text('status').notNull(),
+    packet: text('packet_json', { mode: 'json' })
+      .$type<import('./control-contract.js').StoredCommand>()
+      .notNull(),
+  },
+  (table) => [
+    index('device_commands_device').on(
+      table.deviceId,
+      sql`${table.expiresAt} DESC`,
+    ),
+  ],
+);

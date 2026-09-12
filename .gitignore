@@ -18,3 +18,4 @@ coverage/
 /.benchmark/
 .zcode/
 .DS_Store
+firmware/**/platform_config.h
