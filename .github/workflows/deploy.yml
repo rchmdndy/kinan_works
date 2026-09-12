@@ -1,0 +1,64 @@
+name: Deploy production
+on:
+  workflow_call:
+    inputs:
+      revision:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Full 40-character SHA with successful CI and published images
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: kinan-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.repository == 'rchmdndy/kinan_works' && github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://growsense.my.id
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate revision and successful publication
+        env:
+          REVISION: ${{ inputs.revision }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          # Called by CI only after both publish matrix entries succeed.
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            gh api "repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$REVISION&event=push&status=success&per_page=100" \
+              --jq '.workflow_runs | any(.head_branch == "main" and .conclusion == "success")' | grep -qx true
+          fi
+      - name: Deploy through restricted SSH command
+        env:
+          REVISION: ${{ inputs.revision }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          DEPLOY_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          umask 077
+          SSH_DIR=$(mktemp -d)
+          trap 'rm -rf "$SSH_DIR"' EXIT
+          printf '%s\n' "$DEPLOY_KEY" > "$SSH_DIR/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$SSH_DIR/known_hosts"
+          ssh -F /dev/null -i "$SSH_DIR/key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            "kinan-deploy@$VPS_HOST" "deploy sha-$REVISION"
+          printf 'Deployed revision `%s` to https://growsense.my.id\n' "$REVISION" >> "$GITHUB_STEP_SUMMARY"
