@@ -9,6 +9,10 @@ Self-hosted IoT telemetry console using Bun, SQLite, Redis, Mosquitto, and Svelt
 - Mosquitto has anonymous access disabled. Each active device uses its device ID as MQTT username and its revealable encrypted secret as password, and may publish only `devices/<deviceId>/<credentialVersion>/telemetry`. The API independently validates device active state, topic/payload credential version, timestamp skew, parameter set, and idempotent write ID.
 - Human access uses local username/password with Argon2id and strict same-origin, HttpOnly cookie sessions. State-changing requests require the cookie-backed CSRF token. There is no public sign-up.
 
+## Demo seeding in production
+
+`seed.js` refuses production by default. For the explicitly approved public demo account (`test@skripsi.com` / `loginlogin`), run once with `ALLOW_DEMO_SEED_IN_PRODUCTION=1`. The flag must be supplied for each invocation; do not add it to `.env.vps`. The seeder backs up SQLite, only creates or refreshes its verified demo identity, and refuses ownership conflicts. This account has a known password and must never be used for production data.
+
 ## Five-topic device control
 
 The control protocol uses `devices/<id>/telemetry`, `commands`, `command-results`, `state`, and `availability` (each suffix is a separate topic under the same device prefix). Commands, results and telemetry use QoS 1, never retained. State and availability use QoS 1 with retention. Devices subscribe only to their own commands and publish only their own four reporting topics; the API has the inverse policy.

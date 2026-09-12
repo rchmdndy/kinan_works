@@ -34,6 +34,18 @@ function envFor(directory: string): NodeJS.ProcessEnv {
 }
 const broker = { sync: async () => undefined };
 
+test('demo seed requires explicit production opt-in', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'kinan-demo-seed-'));
+  directories.push(directory);
+  const env = { ...envFor(directory), NODE_ENV: 'production' };
+  await expect(seedDemo(env, { broker })).rejects.toThrow(
+    'ALLOW_DEMO_SEED_IN_PRODUCTION=1',
+  );
+  await expect(
+    seedDemo({ ...env, ALLOW_DEMO_SEED_IN_PRODUCTION: '1' }, { broker }),
+  ).resolves.toMatchObject({ createdUser: true, createdDevice: true });
+});
+
 test('demo seed is idempotent, uses fixed credentials, and creates no telemetry', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'kinan-demo-seed-'));
   directories.push(directory);

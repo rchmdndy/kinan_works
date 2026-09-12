@@ -105,8 +105,13 @@ export async function seedDemo(
   } = {},
 ): Promise<DemoSeedResult> {
   const config = loadConfig(env);
-  if (config.NODE_ENV !== 'development')
-    throw new Error('Demo seeding is allowed only when NODE_ENV=development');
+  if (
+    config.NODE_ENV !== 'development' &&
+    env.ALLOW_DEMO_SEED_IN_PRODUCTION !== '1'
+  )
+    throw new Error(
+      'Demo seeding requires NODE_ENV=development or explicit ALLOW_DEMO_SEED_IN_PRODUCTION=1',
+    );
   // Never run application-wide migrations as a side effect of demo refresh.
   const existed = existsSync(config.SQLITE_PATH);
   if (!existed && options.dryRun)
