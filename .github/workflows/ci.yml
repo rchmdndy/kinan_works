@@ -20,6 +20,8 @@ jobs:
       - run: bun run build
       - run: bun run test
         timeout-minutes: 3
+      - name: Test deployment command boundary
+        run: python3 scripts/deploy/test_deploy.py
   container-build:
     needs: verify
     runs-on: ubuntu-latest
@@ -71,3 +73,13 @@ jobs:
       - name: Log out of GHCR
         if: always()
         run: docker logout ghcr.io
+  deploy:
+    needs: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'rchmdndy/kinan_works'
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      revision: ${{ github.sha }}
+    secrets: inherit
