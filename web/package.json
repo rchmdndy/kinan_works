@@ -13,13 +13,10 @@
     "@fontsource/ibm-plex-sans": "^5.3.0",
     "bits-ui": "^2.19.1",
     "chart.js": "^4.5.0",
-    "file-saver": "^2.0.5",
-    "svelte": "^5.38.7",
-    "xlsx": "^0.18.5"
+    "svelte": "^5.38.7"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.0",
-    "@types/file-saver": "^2.0.7",
     "typescript": "^5.9.2",
     "vite": "^7.1.5",
     "svelte-check": "^4.3.1"

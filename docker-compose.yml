@@ -32,11 +32,22 @@ services:
       MQTT_URL: mqtt://mosquitto:1883
       MOSQUITTO_PASSWORD_FILE: /mosquitto-auth/passwd
       MOSQUITTO_ACL_FILE: /mosquitto-auth/acl
+      EXPORTER_URL: http://exporter:3100
       # localhost is canonical; permit 127.0.0.1 only as an explicit local alias.
       LOCAL_APP_ORIGINS: ${LOCAL_APP_ORIGINS:-http://127.0.0.1:5173}
     depends_on:
       redis: { condition: service_healthy }
       mosquitto: { condition: service_started }
+      exporter: { condition: service_healthy }
+  exporter:
+    build: { context: ., dockerfile: exporter/Dockerfile }
+    user: '0:0'
+    volumes: ['./data:/data']
+    environment:
+      EXPORTER_SQLITE_PATH: /data/kinan.sqlite
+      EXPORTER_STORE_PATH: /data/exporter.sqlite
+      EXPORTER_FILES_DIR: /data/exports
+    expose: ['3100']
   web:
     build: { context: ., dockerfile: web/Dockerfile }
     ports: ['127.0.0.1:5173:8080']

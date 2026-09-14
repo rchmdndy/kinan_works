@@ -1,5 +1,6 @@
 import { Elysia } from 'elysia';
 import { createFirmwareRoutes } from './routes/firmware.js';
+import { createExportRoutes } from './routes/exports.js';
 import { ControlError, ControlService } from './control.js';
 import { createControlRoutes } from './routes/control.js';
 import { loadConfig } from './config.js';
@@ -105,7 +106,8 @@ export async function createApp(env = process.env, options: AppOptions = {}) {
     .use(createAuthRoutes(dependencies))
     .use(createDeviceRoutes(dependencies))
     .use(createTelemetryRoutes(dependencies))
-    .use(createControlRoutes(dependencies));
+    .use(createControlRoutes(dependencies))
+    .use(createExportRoutes(dependencies));
 
   const consumer = new MqttTelemetryConsumer(
     repository,
