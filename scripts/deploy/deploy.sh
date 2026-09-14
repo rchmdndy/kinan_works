@@ -26,7 +26,7 @@ compose() { docker compose --project-directory "$ROOT" --env-file "$1" -f "$ROOT
 compose "$RUN/environment.next" config --quiet
 # Only these fixed images may be pulled; do not accept arbitrary registry input.
 mapfile -t IMAGES < <(compose "$RUN/environment.next" config --images)
-for component in api web; do
+for component in api web exporter; do
   expected="ghcr.io/rchmdndy/kinan_works-$component:$TAG"
   printf '%s\n' "${IMAGES[@]}" | grep -Fxq "$expected"
   docker pull "$expected"
