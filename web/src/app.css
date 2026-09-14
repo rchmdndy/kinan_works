@@ -998,6 +998,42 @@ fieldset {
 .table-wrap {
   overflow-x: auto;
 }
+.export-history-panel {
+  padding: clamp(20px, 4vw, 34px);
+}
+.export-history {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.export-history th,
+.export-history td {
+  padding: 12px 18px 12px 0;
+  text-align: left;
+  vertical-align: top;
+}
+.export-history th:last-child,
+.export-history td:last-child {
+  padding-right: 0;
+}
+.export-history thead th {
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding-bottom: 9px;
+  white-space: nowrap;
+}
+.export-history tbody tr + tr td {
+  border-top: 1px solid var(--line-soft);
+}
+.export-history tbody td {
+  line-height: 1.45;
+}
+.export-history .field-error {
+  display: inline-block;
+  max-width: 46ch;
+}
 .parameter-table {
   min-width: 720px;
   display: grid;
