@@ -149,16 +149,11 @@ export function createDeviceRoutes(dependencies: AppDependencies) {
       if (input.data.label !== undefined) patch.label = input.data.label;
       if (input.data.parameters !== undefined) {
         for (const parameter of input.data.parameters) {
-          if (
-            parameter.id &&
-            (!device.parameters[parameter.id] ||
-              (device.parameters[parameter.id]!.type ?? 'nilai') !==
-                parameter.type)
-          )
+          if (parameter.id && !device.parameters[parameter.id])
             return error(
               set,
               400,
-              'Existing parameter IDs and types are immutable; omit ID for a new parameter',
+              'Existing parameter ID not found; omit ID for a new parameter',
             );
         }
         patch.parameters = parameterMap(

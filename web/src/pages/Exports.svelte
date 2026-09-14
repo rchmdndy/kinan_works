@@ -1,9 +1,8 @@
 <script lang="ts">
   import { Checkbox, Select } from 'bits-ui';
   import { api } from '../lib/api';
-  import { buildExportTable } from '../lib/export-data';
-  import { exportTelemetry } from '../lib/export';
-  import type { Device, TelemetryPacket } from '../lib/types';
+  import type { Device } from '../lib/types';
+  import type { ExportJob, ExportRecord } from '../lib/export-jobs';
 
   const toLocalDateTime = (timestamp: number) =>
     new Date(timestamp - new Date(timestamp).getTimezoneOffset() * 60_000)
@@ -18,6 +17,8 @@
   let message = $state('');
   let notice = $state('');
   let knownDevices = $state('');
+  let exports = $state<ExportRecord[]>([]);
+  let activeJobId = $state('');
   const device = () => devices.find((item) => item.id === deviceId) || null;
   const deviceOptions = $derived(
     devices.map((item) => ({ value: item.id, label: item.label })),
@@ -38,6 +39,9 @@
           .map((p) => p.id)
       : [];
   });
+  $effect(() => {
+    void refreshExports();
+  });
   function changeDevice(id: string) {
     deviceId = id;
     parameterIds = Object.values(
@@ -51,13 +55,20 @@
       ? parameterIds.filter((item) => item !== id)
       : [...parameterIds, id];
   }
-  async function exportReport() {
+  async function refreshExports() {
+    try {
+      const result = await api<{ exports: ExportRecord[] }>('/api/exports');
+      exports = result.exports;
+    } catch {
+      exports = [];
+    }
+  }
+  async function submitExport() {
     const selected = device();
     if (!selected || !parameterIds.length) {
       message = 'Pilih perangkat dan minimal satu parameter.';
       return;
     }
-    const requestedDeviceId = selected.id;
     const start = new Date(startDate);
     const end = new Date(endDate);
     if (
@@ -72,35 +83,60 @@
     message = '';
     notice = '';
     try {
-      const result = await api<{ device: Device; samples: TelemetryPacket[] }>(
-        `/api/devices/${encodeURIComponent(requestedDeviceId)}/history?start=${start.getTime()}&end=${end.getTime()}&limit=500`,
-      );
-      if (requestedDeviceId !== deviceId) return;
-      if (result.samples.length === 500) {
-        message =
-          'Ekspor dibatalkan karena mencapai batas 500 sampel dan mungkin tidak lengkap. Persempit rentang waktu.';
-        return;
-      }
-      const availableIds = parameterIds.filter(
-        (id) => result.device.parameters[id],
-      );
-      if (!availableIds.length) {
-        message = 'Parameter yang dipilih tidak lagi tersedia.';
-        return;
-      }
-      await exportTelemetry(
-        result.device,
-        result.samples,
-        start,
-        end,
-        availableIds,
-      );
-      notice = `${buildExportTable(result.device, result.samples, start, end, availableIds).rows.length} sampel diekspor dengan metadata perangkat terbaru.`;
+      const result = await api<{ job: ExportJob }>('/api/exports', {
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: selected.id,
+          parameterIds,
+          start: start.getTime(),
+          end: end.getTime(),
+        }),
+      });
+      activeJobId = result.job.id;
+      notice = 'Permintaan ekspor dibuat. Pekerjaan berjalan di server.';
+      await refreshExports();
+      void watchJob(result.job.id);
     } catch (error) {
       message = error instanceof Error ? error.message : 'Ekspor gagal.';
     } finally {
       busy = false;
     }
+  }
+  async function watchJob(jobId: string) {
+    for (let attempt = 0; attempt < 600; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      try {
+        const result = await api<{ job: ExportJob }>(
+          `/api/exports/${encodeURIComponent(jobId)}`,
+        );
+        if (result.job.status === 'ready') {
+          activeJobId = '';
+          notice = `Ekspor selesai: ${result.job.rowCount ?? 0} baris.`;
+          await refreshExports();
+          return;
+        }
+        if (result.job.status === 'failed') {
+          activeJobId = '';
+          message = result.job.error || 'Ekspor gagal di server.';
+          await refreshExports();
+          return;
+        }
+      } catch {
+        return;
+      }
+    }
+  }
+  function downloadExport(id: string) {
+    window.location.href = `/api/exports/${encodeURIComponent(id)}/file`;
+  }
+  function formatTime(timestamp: number): string {
+    return new Date(timestamp).toLocaleString('id-ID');
+  }
+  function formatStatus(status: ExportRecord['status']): string {
+    if (status === 'queued') return 'Antri';
+    if (status === 'processing') return 'Diproses';
+    if (status === 'ready') return 'Siap';
+    return 'Gagal';
   }
 </script>
 
@@ -108,8 +144,8 @@
   <div>
     <h1>Exports</h1>
     <p>
-      Unduh telemetry sebagai XLSX dengan metadata dan format numerik yang
-      tepat.
+      Pekerjaan ekspor dijalankan di server; halaman ini hanya memantau status
+      dan mengunduh hasilnya.
     </p>
   </div>
 </header>
@@ -118,14 +154,14 @@
     class="panel export-panel"
     onsubmit={(event) => {
       event.preventDefault();
-      void exportReport();
+      void submitExport();
     }}
   >
     <div class="export-steps">
       <section>
         <div class="section-heading">
           <h2>Sumber data</h2>
-          <p>Rentang akhir bersifat eksklusif, maksimal 499 sampel.</p>
+          <p>Rentang akhir bersifat eksklusif; seluruh sampel diekspor.</p>
         </div>
         <div class="export-grid">
           <label
@@ -244,10 +280,60 @@
       </p>{/if}
     <div class="form-actions end">
       <button type="submit" disabled={busy || !parameterIds.length}
-        >{busy ? 'Menyiapkan…' : 'Unduh XLSX'}</button
+        >{busy ? 'Mengirim…' : 'Buat ekspor'}</button
       >
     </div>
   </form>
+  <section class="panel">
+    <div class="section-heading">
+      <h2>Riwayat ekspor</h2>
+      <p>Daftar pekerjaan ekspor beserta statusnya.</p>
+    </div>
+    {#if exports.length}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Rentang</th>
+              <th>Status</th>
+              <th>Baris</th>
+              <th>Dibuat</th>
+              <th>Unduh</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each exports as item (item.id)}
+              <tr>
+                <td>{item.deviceLabel}</td>
+                <td>{formatTime(item.start)} – {formatTime(item.end)}</td>
+                <td
+                  >{formatStatus(item.status)}{item.id === activeJobId
+                    ? ' (dipantau)'
+                    : ''}</td
+                >
+                <td>{item.rowCount ?? '—'}</td>
+                <td>{formatTime(item.createdAt)}</td>
+                <td>
+                  {#if item.status === 'ready'}
+                    <button
+                      type="button"
+                      class="button small"
+                      onclick={() => downloadExport(item.id)}>Unduh</button
+                    >
+                  {:else if item.status === 'failed'}
+                    <span class="field-error">{item.error || 'Gagal'}</span>
+                  {:else}—{/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {:else}
+      <p>Belum ada pekerjaan ekspor.</p>
+    {/if}
+  </section>
 {:else}<section class="panel empty">
     <h2>Belum ada data untuk diekspor</h2>
     <p>Tambahkan device terlebih dahulu.</p>

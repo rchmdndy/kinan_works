@@ -5,6 +5,7 @@ COPY package.json bun.lock ./
 COPY api/package.json api/package.json
 COPY web/package.json web/package.json
 COPY simulator/package.json simulator/package.json
+COPY exporter/package.json exporter/package.json
 RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
     bun install --frozen-lockfile --filter kinan-works-web
 

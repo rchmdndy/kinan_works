@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
+  changeParameterType,
   hasDeviceDraftErrors,
   normalizeDeviceDraft,
   validateDeviceDraft,
@@ -33,4 +34,41 @@ test('device draft validates bounds and normalizes API payload', () => {
 test('device draft requires at least one parameter', () => {
   const errors = validateDeviceDraft('Stasiun', []);
   expect(errors.parameters).toBe('Tambahkan minimal satu parameter.');
+});
+
+test('parameter type changes reset incompatible fields', () => {
+  const parameter = {
+    type: 'control-setpoint' as const,
+    label: 'Target suhu',
+    unit: '°C',
+    points: 2,
+    min: 10,
+    max: 40,
+  };
+
+  expect(changeParameterType(parameter, 'control-state')).toEqual({
+    type: 'control-state',
+    label: 'Target suhu',
+    unit: '',
+    points: 0,
+  });
+  expect(changeParameterType(parameter, 'nilai')).toEqual({
+    type: 'nilai',
+    label: 'Target suhu',
+    unit: '°C',
+    points: 2,
+  });
+  expect(
+    changeParameterType(
+      { type: 'control-state', label: 'Pompa', unit: '', points: 0 },
+      'control-setpoint',
+    ),
+  ).toEqual({
+    type: 'control-setpoint',
+    label: 'Pompa',
+    unit: '',
+    points: 0,
+    min: 0,
+    max: 1,
+  });
 });

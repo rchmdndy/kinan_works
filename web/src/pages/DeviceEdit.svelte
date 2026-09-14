@@ -3,20 +3,22 @@
   import DeviceTabs from '../components/DeviceTabs.svelte';
   import DeviceParameterForm from '../components/DeviceParameterForm.svelte';
   import {
+    changeParameterType,
     hasDeviceDraftErrors,
     normalizeDeviceDraft,
     validateDeviceDraft,
   } from '../lib/device-form';
+  import type { ParameterDraft, ParameterType } from '../lib/device-form';
   import type { Device } from '../lib/types';
+
+  type EditableParameter = ParameterDraft & { id?: string };
 
   let {
     device,
     ondevicechange,
   }: { device: Device; ondevicechange: (device: Device) => void } = $props();
   let label = $state('');
-  let parameters = $state<
-    (import('../lib/device-form').ParameterDraft & { id?: string })[]
-  >([]);
+  let parameters = $state<EditableParameter[]>([]);
   let busy = $state(false);
   let message = $state('');
   let notice = $state('');
@@ -42,6 +44,13 @@
   function removeParameter(index: number) {
     if (parameters.length > 1)
       parameters = parameters.filter((_, itemIndex) => itemIndex !== index);
+  }
+  function updateParameterType(index: number, type: ParameterType) {
+    parameters = parameters.map((parameter, itemIndex) =>
+      itemIndex === index
+        ? { ...parameter, ...changeParameterType(parameter, type) }
+        : parameter,
+    );
   }
   async function saveDevice() {
     const errors = validateDeviceDraft(label, parameters);
@@ -101,8 +110,8 @@
     <div>
       <h2>Konfigurasi device</h2>
       <p>
-        ID dan tipe parameter tersimpan tetap. Parameter baru default nilai.
-        Label, satuan, desimal, dan batas target dapat diedit.
+        ID parameter tetap. Perubahan tipe dan metadata menimpa konfigurasi
+        sebelumnya tanpa mengubah data history.
       </p>
     </div>
     <button onclick={() => void saveDevice()} disabled={busy}
@@ -123,6 +132,7 @@
       immutableIds
       onadd={addParameter}
       onremove={removeParameter}
+      ontypechange={updateParameterType}
     />
   </div>
 </section>

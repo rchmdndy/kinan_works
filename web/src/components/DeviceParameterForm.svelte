@@ -1,5 +1,9 @@
 <script lang="ts">
-  import type { DeviceDraftErrors, ParameterDraft } from '../lib/device-form';
+  import type {
+    DeviceDraftErrors,
+    ParameterDraft,
+    ParameterType,
+  } from '../lib/device-form';
   let {
     parameters = $bindable(),
     errors,
@@ -7,6 +11,7 @@
     immutableIds = false,
     onadd,
     onremove,
+    ontypechange,
   }: {
     parameters: (ParameterDraft & { id?: string })[];
     errors?: DeviceDraftErrors;
@@ -14,12 +19,13 @@
     immutableIds?: boolean;
     onadd: () => void;
     onremove: (index: number) => void;
+    ontypechange?: (index: number, type: ParameterType) => void;
   } = $props();
 </script>
 
 <p>
-  Default nilai untuk sensor numerik. ID dan tipe tidak dapat diubah setelah
-  disimpan; firmware memakai ID yang sama.
+  Default nilai untuk sensor numerik. Mengubah tipe mempertahankan ID dan
+  menampilkan history lama menggunakan konfigurasi terbaru.
 </p>
 <div class="parameter-list">
   {#each parameters as parameter, index (parameter)}
@@ -31,8 +37,10 @@
       <div class="parameter-fields">
         <label
           >Tipe<select
-            bind:value={parameter.type}
-            disabled={busy || Boolean(parameter.id)}
+            value={parameter.type}
+            onchange={(event) =>
+              ontypechange?.(index, event.currentTarget.value as ParameterType)}
+            disabled={busy}
           >
             <option value="nilai">nilai — sensor numerik</option>
             <option value="control-state"

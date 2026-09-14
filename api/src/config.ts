@@ -24,6 +24,7 @@ const envSchema = z.object({
   MOSQUITTO_PASSWORD_FILE: z.string().min(1).default('./data/mosquitto/passwd'),
   MOSQUITTO_ACL_FILE: z.string().min(1).default('./data/mosquitto/acl'),
   MOSQUITTO_PASSWD_BIN: z.string().min(1).default('mosquitto_passwd'),
+  EXPORTER_URL: z.string().url().default('http://localhost:3100'),
   MOSQUITTO_RELOAD_URL: optionalUrl,
   MOSQUITTO_RELOAD_TOKEN: z.string().optional(),
   SESSION_TTL_MS: z.coerce

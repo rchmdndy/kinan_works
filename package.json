@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "bun run --cwd api dev & bun run --cwd web dev",
     "build": "bun run --cwd api build && bun run --cwd web build && bun run --cwd simulator build",
-    "test": "bun test --timeout 60000 api/tests web/src/lib simulator/src",
-    "typecheck": "bun run --cwd api typecheck && bun run --cwd web check && bun run --cwd simulator typecheck",
+    "test": "bun test --timeout 60000 api/tests web/src/lib simulator/src exporter/src",
+    "typecheck": "bun run --cwd api typecheck && bun run --cwd web check && bun run --cwd simulator typecheck && bun run --cwd exporter typecheck",
     "lint": "eslint .",
     "format": "prettier --write . '!**/.benchmark/**' '!**/data/**'",
     "format:check": "prettier --check . '!**/.benchmark/**' '!**/data/**'",
@@ -19,7 +19,8 @@
   "workspaces": [
     "api",
     "web",
-    "simulator"
+    "simulator",
+    "exporter"
   ],
   "devDependencies": {
     "@eslint/js": "9.39.1",
