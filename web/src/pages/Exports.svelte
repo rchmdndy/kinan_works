@@ -3,6 +3,7 @@
   import { api } from '../lib/api';
   import type { Device } from '../lib/types';
   import type { ExportJob, ExportRecord } from '../lib/export-jobs';
+  import { formatExportError } from '../lib/export-error';
 
   const toLocalDateTime = (timestamp: number) =>
     new Date(timestamp - new Date(timestamp).getTimezoneOffset() * 60_000)
@@ -117,7 +118,7 @@
         }
         if (result.job.status === 'failed') {
           activeJobId = '';
-          message = result.job.error || 'Ekspor gagal di server.';
+          message = formatExportError(result.job.error);
           await refreshExports();
           return;
         }
@@ -322,7 +323,9 @@
                       onclick={() => downloadExport(item.id)}>Unduh</button
                     >
                   {:else if item.status === 'failed'}
-                    <span class="field-error">{item.error || 'Gagal'}</span>
+                    <span class="field-error"
+                      >{formatExportError(item.error)}</span
+                    >
                   {:else}—{/if}
                 </td>
               </tr>
