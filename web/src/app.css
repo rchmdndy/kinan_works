@@ -999,6 +999,7 @@ fieldset {
   overflow-x: auto;
 }
 .export-history-panel {
+  max-width: 960px;
   padding: clamp(20px, 4vw, 34px);
 }
 .export-history {
@@ -1440,7 +1441,8 @@ fieldset {
     overflow-x: auto;
   }
   .form-panel,
-  .export-panel {
+  .export-panel,
+  .export-history-panel {
     padding: 18px 14px;
   }
   .parameter-fields {
