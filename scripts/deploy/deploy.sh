@@ -25,6 +25,27 @@ PY
 compose() { docker compose --project-directory "$ROOT" --env-file "$1" -f "$ROOT/docker-compose.vps.yml" "${@:2}"; }
 compose "$RUN/environment.next" config --quiet
 # Only these fixed images may be pulled; do not accept arbitrary registry input.
+# Sync the VPS compose file with the deployed revision first: the API image
+# carries the matching docker-compose.vps.yml, so the stack definition always
+# matches the pulled images instead of a stale manual copy.
+(
+  set -euo pipefail
+  # The pre-pull image list still uses the old compose file; pull api first so
+  # the revision-matching compose definition is available locally.
+  api_image="ghcr.io/rchmdndy/kinan_works-api:$TAG"
+  docker pull "$api_image"
+  revision=$(docker image inspect "$api_image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+  [[ $revision == "${TAG#sha-}" ]] || { printf 'API revision label mismatch\n' >&2; exit 1; }
+  compose_cid=$(docker create "$api_image")
+  cleanup() { docker rm -f "$compose_cid" >/dev/null 2>&1 || true; }
+  trap cleanup EXIT
+  docker cp "$compose_cid:/app/docker-compose.vps.yml" "$RUN/docker-compose.vps.yml"
+  cleanup
+)
+install -m 644 "$RUN/docker-compose.vps.yml" "$ROOT/docker-compose.vps.yml.next"
+docker compose --project-directory "$ROOT" --env-file "$RUN/environment.next" \
+  -f "$ROOT/docker-compose.vps.yml.next" config --quiet
+mv "$ROOT/docker-compose.vps.yml.next" "$ROOT/docker-compose.vps.yml"
 mapfile -t IMAGES < <(compose "$RUN/environment.next" config --images)
 for component in api web exporter; do
   expected="ghcr.io/rchmdndy/kinan_works-$component:$TAG"
