@@ -6,8 +6,14 @@ COPY api/package.json api/package.json
 COPY web/package.json web/package.json
 COPY simulator/package.json simulator/package.json
 COPY exporter/package.json exporter/package.json
+# The xlsx tarball is large and registry extraction has been flaky on the
+# GitHub runner; retry the install on transient download failures.
 RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
-    bun install --frozen-lockfile --filter kinan-works-exporter
+    for attempt in 1 2 3; do \
+      bun install --frozen-lockfile --filter kinan-works-exporter && exit 0; \
+      echo "install attempt $attempt failed; retrying"; sleep $((attempt * 5)); \
+    done; \
+    exit 1
 
 FROM dependencies AS build
 COPY exporter exporter
