@@ -1,11 +1,36 @@
+export type ParameterType = 'nilai' | 'control-state' | 'control-setpoint';
+
 export type ParameterDraft = {
-  type?: 'nilai' | 'control-state' | 'control-setpoint';
+  type?: ParameterType;
   min?: number | null;
   max?: number | null;
   label: string;
   unit: string;
   points: number | null | undefined;
 };
+
+export function changeParameterType(
+  parameter: ParameterDraft,
+  type: ParameterType,
+): ParameterDraft {
+  if (type === 'control-state')
+    return { label: parameter.label, type, unit: '', points: 0 };
+  if (type === 'control-setpoint')
+    return {
+      label: parameter.label,
+      type,
+      unit: parameter.unit,
+      points: Number.isInteger(parameter.points) ? parameter.points : 0,
+      min: 0,
+      max: 1,
+    };
+  return {
+    label: parameter.label,
+    type,
+    unit: parameter.unit,
+    points: Number.isInteger(parameter.points) ? parameter.points : 0,
+  };
+}
 
 export type DeviceDraftErrors = {
   label?: string;

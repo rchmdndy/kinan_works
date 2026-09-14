@@ -202,21 +202,17 @@ describe('self-hosted live integration', () => {
     const originalParameters = Object.values(
       service.repository.getDevice(deviceId)!.parameters,
     );
-    for (const parameters of [
-      originalParameters.map((p) =>
-        p.id === 'parameter_1'
-          ? { ...p, type: 'control-state', unit: '', points: 0 }
-          : p,
-      ),
-      originalParameters.map((p) => ({ ...p, id: 'invented_id' })),
-    ]) {
-      const rejected = await fetchApi(`/api/devices/${deviceId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Origin: env.APP_ORIGIN },
-        body: JSON.stringify({ parameters }),
-      });
-      expect(rejected.status).toBe(400);
-    }
+    const rejected = await fetchApi(`/api/devices/${deviceId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Origin: env.APP_ORIGIN },
+      body: JSON.stringify({
+        parameters: originalParameters.map((parameter) => ({
+          ...parameter,
+          id: 'invented_id',
+        })),
+      }),
+    });
+    expect(rejected.status).toBe(400);
     const edited = await fetchApi(`/api/devices/${deviceId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Origin: env.APP_ORIGIN },
@@ -354,6 +350,89 @@ describe('self-hosted live integration', () => {
     expect(
       service.repository.getControl(deviceId).state?.parameters[0]?.value,
     ).toBe(true);
+    const historyBeforeTypeChange = service.repository.getHistory(
+      deviceId,
+      0,
+      Date.now() + 60_000,
+      100,
+    );
+    const typeChange = await fetchApi(`/api/devices/${deviceId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Origin: env.APP_ORIGIN },
+      body: JSON.stringify({
+        parameters: Object.values(
+          service.repository.getDevice(deviceId)!.parameters,
+        ).map((parameter) =>
+          parameter.id === 'parameter_1'
+            ? { ...parameter, type: 'control-state', unit: '', points: 0 }
+            : parameter,
+        ),
+      }),
+    });
+    expect(typeChange.status).toBe(200);
+    const typeChangeBody = (await typeChange.json()) as {
+      device: {
+        parameters: Record<
+          string,
+          {
+            id: string;
+            type: string;
+            label: string;
+            unit: string;
+            points: number;
+          }
+        >;
+      };
+    };
+    expect(Object.keys(typeChangeBody.device.parameters)).toEqual([
+      'parameter_1',
+      'parameter_2',
+    ]);
+    expect(typeChangeBody.device.parameters.parameter_1).toEqual({
+      id: 'parameter_1',
+      type: 'control-state',
+      label: 'Temperature edited',
+      unit: '',
+      points: 0,
+    });
+    expect(
+      service.repository.getHistory(deviceId, 0, Date.now() + 60_000, 100),
+    ).toEqual(historyBeforeTypeChange);
+    await mqtt.publishAsync(
+      `devices/${deviceId}/1/telemetry`,
+      JSON.stringify({
+        timestamp: Date.now(),
+        writeId: 'write-id-invalid-after-type-change',
+        credentialVersion: 1,
+        values: { parameter_1: { status: 'ok', value: 99 } },
+      }),
+      { qos: 1 },
+    );
+    await Bun.sleep(150);
+    expect(
+      service.repository.getHistory(deviceId, 0, Date.now() + 60_000, 100),
+    ).toEqual(historyBeforeTypeChange);
+    await mqtt.publishAsync(
+      `devices/${deviceId}/1/telemetry`,
+      JSON.stringify({
+        timestamp: Date.now(),
+        writeId: 'write-id-valid-after-type-change',
+        credentialVersion: 1,
+        values: {},
+      }),
+      { qos: 1 },
+    );
+    await Bun.sleep(150);
+    const historyAfterTypeChange = service.repository.getHistory(
+      deviceId,
+      0,
+      Date.now() + 60_000,
+      100,
+    );
+    expect(historyAfterTypeChange).toHaveLength(
+      historyBeforeTypeChange.length + 1,
+    );
+    expect(historyAfterTypeChange.at(-1)?.values).toEqual({});
     response = await fetch(
       `http://127.0.0.1:${apiPort}/api/devices/${deviceId}/commands`,
       {
@@ -399,7 +478,7 @@ describe('self-hosted live integration', () => {
     expect(
       service.repository.getHistory(deviceId, 0, Date.now() + 60_000, 100)
         .length,
-    ).toBe(12);
+    ).toBe(13);
     mqtt.end(true);
   });
 });
