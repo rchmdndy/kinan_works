@@ -62,33 +62,35 @@ export class ExportWorker {
 
   private process(job: ExportJobRecord): void {
     this.store.update(job.id, { status: 'processing', startedAt: Date.now() });
-    let filePath: string | null = null;
-    try {
-      const result = this.runExport(job);
-      filePath = result.filePath;
-      this.store.update(job.id, {
-        status: 'ready',
-        rowCount: result.rowCount,
-        filePath: result.filePath,
-        fileBytes: result.fileBytes,
-        finishedAt: Date.now(),
-      });
-    } catch (error) {
-      if (filePath) rmSync(filePath, { force: true });
-      this.store.update(job.id, {
-        status: 'failed',
-        error:
-          error instanceof Error ? error.message : 'Ekspor gagal dijalankan.',
-        finishedAt: Date.now(),
-      });
-    }
+    void (async () => {
+      let filePath: string | null = null;
+      try {
+        const result = await this.runExport(job);
+        filePath = result.filePath;
+        this.store.update(job.id, {
+          status: 'ready',
+          rowCount: result.rowCount,
+          filePath: result.filePath,
+          fileBytes: result.fileBytes,
+          finishedAt: Date.now(),
+        });
+      } catch (error) {
+        if (filePath) rmSync(filePath, { force: true });
+        this.store.update(job.id, {
+          status: 'failed',
+          error:
+            error instanceof Error ? error.message : 'Ekspor gagal dijalankan.',
+          finishedAt: Date.now(),
+        });
+      }
+    })();
   }
 
-  runExport(job: ExportJobRecord): {
+  async runExport(job: ExportJobRecord): Promise<{
     filePath: string;
     fileBytes: number;
     rowCount: number;
-  } {
+  }> {
     const device = this.loadDevice(job);
     if (!device) throw new Error('Device tidak ditemukan pada database.');
     if (device.owner_uid !== job.userId)
@@ -137,7 +139,7 @@ export class ExportWorker {
     const bytes = buildWorkbookBytes({ headers, rows, info, numberFormats });
     const fileName = `${safeExportName(device.label)}-${job.id}.xlsx`;
     const filePath = join(this.config.EXPORTER_FILES_DIR, fileName);
-    Bun.write(filePath, bytes);
+    await Bun.write(filePath, bytes);
     chmodSync(filePath, 0o600);
     return {
       filePath: fileName,

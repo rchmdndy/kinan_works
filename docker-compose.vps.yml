@@ -20,9 +20,12 @@ services:
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/entrypoint.sh:/mosquitto/config/entrypoint.sh:ro
+      - ./mosquitto/certs:/mosquitto/certs:ro
       - ./data/mosquitto:/mosquitto/auth
       - mosquitto-data:/mosquitto/data
-    ports: ['127.0.0.1:${MQTT_PORT:-1883}:1883']
+    ports:
+      - '127.0.0.1:${MQTT_PORT:-1883}:1883'
+      - '${MQTT_TLS_PORT:-8883}:8883'
   api:
     image: ghcr.io/${GHCR_OWNER:-rchmdndy}/kinan_works-api:${IMAGE_TAG:?Set IMAGE_TAG to sha- followed by the full commit SHA}
     restart: unless-stopped
