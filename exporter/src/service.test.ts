@@ -158,7 +158,8 @@ describe('exporter internal service', () => {
   test('lists jobs per user only', async () => {
     const mine = await call('GET', '/internal/exports/?userId=user_1&limit=10');
     expect(mine.status).toBe(200);
-    expect(mine.json.exports.length).toBe(2);
+    const mineJobs = mine.json.exports as Array<{ id: string }>;
+    expect(mineJobs.length).toBe(2);
     const other = await call(
       'GET',
       '/internal/exports/?userId=user_2&limit=10',
@@ -191,8 +192,9 @@ describe('exporter internal service', () => {
       `/internal/exports/${job.id}?userId=user_1`,
     );
     expect(owner.status).toBe(200);
-    expect(owner.json.job.status).toBe('ready');
-    expect(owner.json.job.rowCount).toBe(4);
+    const ownerJob = owner.json.job as { status: string; rowCount: number };
+    expect(ownerJob.status).toBe('ready');
+    expect(ownerJob.rowCount).toBe(4);
     const stranger = await call(
       'GET',
       `/internal/exports/${job.id}?userId=user_2`,
