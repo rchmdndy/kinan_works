@@ -41,9 +41,20 @@ services:
       MQTT_URL: mqtt://mosquitto:1883
       MOSQUITTO_PASSWORD_FILE: /mosquitto-auth/passwd
       MOSQUITTO_ACL_FILE: /mosquitto-auth/acl
+      EXPORTER_URL: http://exporter:3100
     depends_on:
       redis: { condition: service_healthy }
       mosquitto: { condition: service_started }
+      exporter: { condition: service_healthy }
+  exporter:
+    image: ghcr.io/${GHCR_OWNER:-rchmdndy}/kinan_works-exporter:${IMAGE_TAG:?Set IMAGE_TAG to sha- followed by the full commit SHA}
+    restart: unless-stopped
+    user: '0:0'
+    volumes: ['./data:/data']
+    environment:
+      EXPORTER_SQLITE_PATH: /data/kinan.sqlite
+      EXPORTER_STORE_PATH: /data/exporter.sqlite
+      EXPORTER_FILES_DIR: /data/exports
   web:
     image: ghcr.io/${GHCR_OWNER:-rchmdndy}/kinan_works-web:${IMAGE_TAG:?Set IMAGE_TAG to sha- followed by the full commit SHA}
     restart: unless-stopped
