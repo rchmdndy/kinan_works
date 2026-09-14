@@ -179,7 +179,7 @@ describe('exporter internal service', () => {
       'Demo device',
     );
     const worker = new ExportWorker(store, config);
-    const result = worker.runExport(job);
+    const result = await worker.runExport(job);
     store.update(job.id, {
       status: 'ready',
       filePath: result.filePath,

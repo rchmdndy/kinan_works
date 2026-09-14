@@ -117,9 +117,9 @@ describe('export worker', () => {
     worker = new ExportWorker(store, config);
   });
 
-  test('exports all rows across keyset pages in chronological order', () => {
+  test('exports all rows across keyset pages in chronological order', async () => {
     const job = makeJob();
-    const result = worker.runExport(job);
+    const result = await worker.runExport(job);
     expect(result.rowCount).toBe(10);
     expect(existsSync(join(filesDir, result.filePath))).toBe(true);
     const workbook = XLSX.readFile(join(filesDir, result.filePath));
@@ -134,7 +134,7 @@ describe('export worker', () => {
     expect(values[9]).toBe(9);
   });
 
-  test('handles identical timestamps with write_id tiebreak', () => {
+  test('handles identical timestamps with write_id tiebreak', async () => {
     seedTelemetry(5, true);
     const secondStore = new ExportStore(`${tmp}/store2.sqlite`);
     const secondWorker = new ExportWorker(secondStore, {
@@ -151,12 +151,12 @@ describe('export worker', () => {
       },
       'Demo device',
     );
-    const result = secondWorker.runExport(job);
+    const result = await secondWorker.runExport(job);
     expect(result.rowCount).toBe(5);
     secondStore.close();
   });
 
-  test('rejects jobs for devices owned by another user', () => {
+  test('rejects jobs for devices owned by another user', async () => {
     seedTelemetry(10);
     const job = store.createJob(
       {
@@ -168,7 +168,7 @@ describe('export worker', () => {
       },
       'Demo device',
     );
-    expect(() => worker.runExport(job)).toThrow(/tidak dimiliki/);
+    await expect(worker.runExport(job)).rejects.toThrow(/tidak dimiliki/);
     const owned = store.createJob(
       {
         userId: 'user_1',
@@ -179,10 +179,10 @@ describe('export worker', () => {
       },
       'Demo device',
     );
-    expect(() => worker.runExport(owned)).toThrow(/tidak ditemukan/);
+    await expect(worker.runExport(owned)).rejects.toThrow(/tidak ditemukan/);
   });
 
-  test('enforces the maximum row guard', () => {
+  test('enforces the maximum row guard', async () => {
     seedTelemetry(10);
     const limitedStore = new ExportStore(`${tmp}/store3.sqlite`);
     const limitedWorker = new ExportWorker(limitedStore, {
@@ -199,14 +199,16 @@ describe('export worker', () => {
       },
       'Demo device',
     );
-    expect(() => limitedWorker.runExport(job)).toThrow(/batas maksimum/);
+    await expect(limitedWorker.runExport(job)).rejects.toThrow(
+      /batas maksimum/,
+    );
     limitedStore.close();
   });
 
-  test('prunes finished files after retention', () => {
+  test('prunes finished files after retention', async () => {
     seedTelemetry(10);
     const job = makeJob();
-    const result = worker.runExport(job);
+    const result = await worker.runExport(job);
     const filePath = join(filesDir, result.filePath);
     expect(existsSync(filePath)).toBe(true);
     const size = statSync(filePath).size;
