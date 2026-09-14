@@ -285,14 +285,14 @@
       >
     </div>
   </form>
-  <section class="panel">
+  <section class="panel export-history-panel">
     <div class="section-heading">
       <h2>Riwayat ekspor</h2>
       <p>Daftar pekerjaan ekspor beserta statusnya.</p>
     </div>
     {#if exports.length}
       <div class="table-wrap">
-        <table>
+        <table class="export-history">
           <thead>
             <tr>
               <th>Device</th>
