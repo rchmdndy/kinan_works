@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { Switch } from 'bits-ui';
+  import { formatReading } from '../lib/export-data';
   import { validTarget, stepTarget } from '../lib/control-input';
   import type {
     DeviceState,
@@ -73,10 +74,10 @@
         `/api/devices/${device.id}/commands`,
         { method: 'POST', body: JSON.stringify(input) },
       );
-      message = `Perintah ${command.commandId}: ${command.status}. Tunggu hasil perangkat, bukan konfirmasi broker.`;
+      message = `Perintah dikirim (${formatCommandStatus(command.status)}). Tunggu hasil dari perangkat, bukan konfirmasi broker.`;
       unresolved = null;
     } catch (error) {
-      message = `${error instanceof Error ? error.message : 'Permintaan gagal'}. Hasil mungkin belum diketahui. Periksa riwayat atau periksa ulang ID yang sama.`;
+      message = `${error instanceof Error ? error.message : 'Permintaan gagal'}. Hasil mungkin belum diketahui. Periksa ulang perintah yang sama di riwayat.`;
     } finally {
       busy = false;
     }
@@ -84,6 +85,28 @@
   function issue(parameterId: string, value: CommandInput['value']) {
     if (!canSend) return;
     void send({ commandId: crypto.randomUUID(), parameterId, value });
+  }
+  const commandParameter = (parameterId: string) =>
+    device.parameters[parameterId];
+  function describeCommand(command: StoredCommand): {
+    label: string;
+    value: string;
+  } {
+    const parameter = commandParameter(command.parameterId);
+    if (command.value === true)
+      return { label: parameter?.label ?? 'Kontrol', value: 'Nyala' };
+    if (command.value === false)
+      return { label: parameter?.label ?? 'Kontrol', value: 'Mati' };
+    return {
+      label: parameter?.label ?? 'Kontrol',
+      value: `${formatReading(command.value, parameter?.points ?? 0)}${parameter?.unit ? ` ${parameter.unit}` : ''}`,
+    };
+  }
+  function formatCommandStatus(status: StoredCommand['status']): string {
+    if (status === 'pending') return 'Menunggu hasil';
+    if (status === 'unknown') return 'Hasil tidak diketahui';
+    if (status === 'succeeded') return 'Berhasil';
+    return 'Ditolak perangkat';
   }
 </script>
 
@@ -226,20 +249,45 @@
       >{/if}
     <h3>Perintah terakhir</h3>
     <p class="control-note">
-      Pending berarti menunggu hasil. Unknown berarti perangkat mungkin sudah
-      menjalankan perintah. Jangan menganggap timeout sebagai kegagalan
-      eksekusi.
+      Menunggu hasil berarti perangkat belum menjawab. Hasil tidak diketahui
+      berarti perangkat mungkin sudah menjalankan perintah — timeout bukan bukti
+      kegagalan.
     </p>
-    <ul>
-      {#each snapshot?.commands.slice(0, 10) ?? [] as command (command.commandId)}<li
-        >
-          <strong>{command.parameterId}: {String(command.value)}</strong> — {command.status}{command.reason
-            ? ` (${command.reason})`
-            : ''}<small
-            >{new Date(command.timestamp).toLocaleString('id-ID')} · {command.commandId}</small
-          >
-        </li>{/each}
-    </ul>
+    {#if snapshot?.commands.length}<ul class="command-list">
+        {#each snapshot.commands.slice(0, 10) as command (command.commandId)}{@const described =
+            describeCommand(command)}
+          <li class="command-item">
+            <div class="command-main">
+              <strong>{described.label}</strong>
+              <span class="command-value"
+                >{described.value === 'Nyala'
+                  ? 'dinyalakan'
+                  : described.value === 'Mati'
+                    ? 'dimatikan'
+                    : `diatur ke ${described.value}`}</span
+              >
+            </div>
+            <span
+              class="command-status"
+              class:pending={command.status === 'pending'}
+              class:unknown={command.status === 'unknown'}
+              class:succeeded={command.status === 'succeeded'}
+              class:rejected={command.status === 'rejected'}
+              >{formatCommandStatus(command.status)}</span
+            >
+            <small>
+              {new Date(command.timestamp).toLocaleString('id-ID')}
+              {#if command.reason}
+                · {command.reason}{/if}
+              {#if command.status === 'pending' && command.expiresAt}
+                · berlaku hingga {new Date(
+                  command.expiresAt,
+                ).toLocaleTimeString('id-ID')}
+              {/if}
+              · ID {command.commandId.slice(0, 8)}
+            </small>
+          </li>{/each}
+      </ul>{:else}<p class="control-note">Belum ada perintah.</p>{/if}
   </div>
 </section>
 
@@ -394,9 +442,57 @@
   .control-history h3 {
     margin-block: 16px 8px;
   }
-  .control-history ul {
+  .command-list {
+    display: grid;
+    gap: 8px;
     margin-bottom: 0;
-    padding-left: 20px;
+    padding: 0;
+    list-style: none;
+  }
+  .command-item {
+    display: grid;
+    gap: 4px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    background: var(--panel-soft);
+    padding: 12px 14px;
+    overflow-wrap: anywhere;
+  }
+  .command-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .command-value {
+    color: var(--ink);
+    font-size: 0.85rem;
+  }
+  .command-status {
+    justify-self: start;
+    border-radius: var(--radius);
+    padding: 3px 10px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: #1d4ed8;
+    background: var(--blue-soft);
+  }
+  .command-status.pending {
+    color: var(--amber);
+    background: var(--amber-soft);
+  }
+  .command-status.unknown {
+    color: var(--muted);
+    background: var(--panel-soft);
+    border: 1px solid var(--line);
+  }
+  .command-status.succeeded {
+    color: #166534;
+    background: #dcfce7;
+  }
+  .command-status.rejected {
+    color: var(--red);
+    background: var(--red-soft);
   }
   small {
     display: block;
