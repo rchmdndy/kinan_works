@@ -28,6 +28,7 @@ export type ExportTable = {
   info: Array<Array<string | number>>;
   numberFormats: string[];
   setpointHistory: SetpointHistoryRow[] | null;
+  reportPeriod: { start: Date; end: Date } | null;
 };
 
 const SETPOINT_HEADERS = [
@@ -43,11 +44,28 @@ const SETPOINT_HEADERS = [
   'penanda konteks',
 ];
 
-const SETPOINT_EMPTY_NOTE =
-  'Tidak ada riwayat perintah setpoint untuk rentang ini. Riwayat mencakup perintah yang dikirim dalam [mulai, akhir) serta konteks terakhir yang berhasil sebelum mulai bila tersedia.';
+function formatUtc(timestamp: Date): string {
+  return timestamp.toISOString().replace('.000Z', 'Z');
+}
 
-const SETPOINT_INFO_NOTE =
-  'Semua waktu berasal dari timestamp paket UTC. XLSX tidak menyimpan zona waktu, sehingga nilai tanggal/waktu ditulis untuk diinterpretasikan sebagai UTC. Rentang adalah [mulai, akhir). Status succeeded hanya mengonfirmasi perangkat menerima perintah, bukan stabilitas fisik. Perubahan lokal perangkat tidak dicatat sebagai riwayat perintah; metadata parameter terbaru tersedia di sheet Informasi. Baris konteks adalah perintah sukses terakhir sebelum mulai untuk tiap parameter dan bukan jaminan keadaan aktual saat ini.';
+function reportPeriodLabel({
+  start,
+  end,
+}: NonNullable<ExportTable['reportPeriod']>): string {
+  return `[${formatUtc(start)}, ${formatUtc(end)}) UTC (mulai inklusif, akhir eksklusif)`;
+}
+
+function setpointEmptyNote(
+  period: NonNullable<ExportTable['reportPeriod']>,
+): string {
+  return `Tidak ada riwayat perintah setpoint untuk rentang ${reportPeriodLabel(period)}. Riwayat mencakup perintah yang dikirim dalam rentang tersebut serta konteks terakhir yang berhasil sebelum ${formatUtc(period.start)} UTC bila tersedia.`;
+}
+
+function setpointInfoNote(
+  period: NonNullable<ExportTable['reportPeriod']>,
+): string {
+  return `Semua waktu berasal dari timestamp paket UTC. XLSX tidak menyimpan zona waktu, sehingga nilai tanggal/waktu ditulis untuk diinterpretasikan sebagai UTC. Rentang laporan adalah ${reportPeriodLabel(period)}. Status succeeded hanya mengonfirmasi perangkat menerima perintah, bukan stabilitas fisik. Perubahan lokal perangkat tidak dicatat sebagai riwayat perintah; metadata parameter terbaru tersedia di sheet Informasi. Baris konteks adalah perintah sukses terakhir sebelum ${formatUtc(period.start)} UTC untuk tiap parameter dan bukan jaminan keadaan aktual saat ini.`;
+}
 
 export function numberFormat(points: number): string {
   return points ? `0.${'0'.repeat(points)}` : '0';
@@ -120,15 +138,24 @@ export function buildWorkbookBytes(table: ExportTable): Uint8Array {
         row.commandId,
         row.context,
       ])
-    : [[SETPOINT_EMPTY_NOTE]];
-  const setpointSheet = XLSX.utils.aoa_to_sheet(
-    [SETPOINT_HEADERS, ...setpointRows, [], [SETPOINT_INFO_NOTE]],
-    { cellDates: true },
-  );
+    : table.setpointHistory
+      ? [[setpointEmptyNote(table.reportPeriod!)]]
+      : null;
+  const setpointSheet = setpointRows
+    ? XLSX.utils.aoa_to_sheet(
+        [
+          SETPOINT_HEADERS,
+          ...setpointRows,
+          [],
+          [setpointInfoNote(table.reportPeriod!)],
+        ],
+        { cellDates: true },
+      )
+    : null;
   for (let row = 1; row <= (table.setpointHistory?.length ?? 0); row += 1) {
-    const sentAt = setpointSheet[XLSX.utils.encode_cell({ r: row, c: 0 })];
-    const resultAt = setpointSheet[XLSX.utils.encode_cell({ r: row, c: 6 })];
-    const target = setpointSheet[XLSX.utils.encode_cell({ r: row, c: 3 })];
+    const sentAt = setpointSheet![XLSX.utils.encode_cell({ r: row, c: 0 })];
+    const resultAt = setpointSheet![XLSX.utils.encode_cell({ r: row, c: 6 })];
+    const target = setpointSheet![XLSX.utils.encode_cell({ r: row, c: 3 })];
     if (sentAt) sentAt.z = DATE_FORMAT;
     if (resultAt) resultAt.z = DATE_FORMAT;
     if (target?.t === 'n') target.z = '0.##########';
@@ -136,7 +163,7 @@ export function buildWorkbookBytes(table: ExportTable): Uint8Array {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, dataSheet, 'Data');
   XLSX.utils.book_append_sheet(workbook, infoSheet, 'Informasi');
-  if (table.setpointHistory)
+  if (setpointSheet)
     XLSX.utils.book_append_sheet(workbook, setpointSheet, 'Riwayat Setpoint');
   const bytes = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
   return new Uint8Array(bytes as ArrayBuffer);
