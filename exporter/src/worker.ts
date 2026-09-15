@@ -135,45 +135,89 @@ export class ExportWorker {
     if (!selected.length)
       throw new Error('Parameter yang dipilih tidak tersedia lagi.');
 
-    const { headers, numberFormats, info } = buildTableHeader(selected);
-    const hasSetpoints = Object.values(parameters).some(
+    const setpoints = Object.values(parameters).filter(
       (parameter) => (parameter.type ?? 'nilai') === 'control-setpoint',
     );
+    const { headers, numberFormats, info } = buildTableHeader(
+      selected,
+      setpoints,
+    );
+    const hasSetpoints = setpoints.length > 0;
     const setpointHistory = hasSetpoints
       ? this.loadSetpointHistory(job, parameters)
       : null;
-    const rows: ExportTable['rows'] = [];
-    // Keyset pagination walking from newest to oldest inside [start, end).
+    const telemetryRows: WorkerTelemetryRow[] = [];
+    // Keyset pagination walks from newest to oldest inside [start, end).
     let cursor: Cursor | null = null;
     while (true) {
       const page = this.fetchPage(job, cursor);
       if (!page.length) break;
-      for (const row of page) {
-        const values = JSON.parse(row.values_json) as Record<
-          string,
-          { status: string; value?: number }
-        >;
-        rows.push([
-          new Date(row.timestamp),
-          ...selected.map((parameter) => {
-            const reading = values[parameter.id];
-            return reading?.status === 'ok' ? (reading.value as number) : '';
-          }),
-        ]);
-      }
+      telemetryRows.push(...page);
       const last = page.at(-1)!;
       cursor = { timestamp: last.timestamp, writeId: last.write_id };
-      if (rows.length >= this.config.EXPORTER_MAX_ROWS)
+      if (telemetryRows.length >= this.config.EXPORTER_MAX_ROWS)
         throw new Error(
           `Ekspor melebihi batas maksimum ${this.config.EXPORTER_MAX_ROWS} baris.`,
         );
     }
-    rows.reverse();
+    telemetryRows.reverse();
+    const events = (setpointHistory ?? []).filter(
+      (row) =>
+        row.sentAt.getTime() >= job.start && row.sentAt.getTime() < job.end,
+    );
+    const rows: ExportTable['rows'] = [
+      ...telemetryRows.map((row) => ({
+        timestamp: row.timestamp,
+        order: 1,
+        key: row.write_id,
+        values: JSON.parse(row.values_json) as Record<
+          string,
+          { status: string; value?: number }
+        >,
+      })),
+      ...events.map((event) => ({
+        timestamp: event.sentAt.getTime(),
+        order: 0,
+        key: event.commandId,
+        event,
+      })),
+    ]
+      .sort(
+        (a, b) =>
+          a.timestamp - b.timestamp ||
+          a.order - b.order ||
+          a.key.localeCompare(b.key),
+      )
+      .map((entry) => {
+        if ('event' in entry) {
+          const setpointValues = setpoints.map((parameter) =>
+            entry.event.status === 'succeeded' &&
+            entry.event.parameterId === parameter.id
+              ? entry.event.target
+              : '',
+          );
+          return [
+            new Date(entry.timestamp),
+            ...selected.map(() => ''),
+            ...setpointValues,
+          ];
+        }
+        return [
+          new Date(entry.timestamp),
+          ...selected.map((parameter) => {
+            const reading = entry.values[parameter.id];
+            return reading?.status === 'ok' ? (reading.value as number) : '';
+          }),
+          ...setpoints.map(() => ''),
+        ];
+      });
     const bytes = buildWorkbookBytes({
       headers,
       rows,
       info,
       numberFormats,
+      sensorColumnCount: selected.length,
+      setpointColumnCount: setpoints.length,
       setpointHistory,
       reportPeriod: hasSetpoints
         ? { start: new Date(job.start), end: new Date(job.end) }
@@ -186,7 +230,7 @@ export class ExportWorker {
     return {
       filePath: fileName,
       fileBytes: bytes.byteLength,
-      rowCount: rows.length,
+      rowCount: telemetryRows.length,
     };
   }
 

@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 
 export type ExportParameter = {
   id: string;
@@ -27,6 +27,8 @@ export type ExportTable = {
   rows: Array<Array<string | number | Date>>;
   info: Array<Array<string | number>>;
   numberFormats: string[];
+  sensorColumnCount: number;
+  setpointColumnCount: number;
   setpointHistory: SetpointHistoryRow[] | null;
   reportPeriod: { start: Date; end: Date } | null;
 };
@@ -64,7 +66,7 @@ function setpointEmptyNote(
 function setpointInfoNote(
   period: NonNullable<ExportTable['reportPeriod']>,
 ): string {
-  return `Semua waktu berasal dari timestamp paket UTC. XLSX tidak menyimpan zona waktu, sehingga nilai tanggal/waktu ditulis untuk diinterpretasikan sebagai UTC. Rentang laporan adalah ${reportPeriodLabel(period)}. Status succeeded hanya mengonfirmasi perangkat menerima perintah, bukan stabilitas fisik. Perubahan lokal perangkat tidak dicatat sebagai riwayat perintah; metadata parameter terbaru tersedia di sheet Informasi. Baris konteks adalah perintah sukses terakhir sebelum ${formatUtc(period.start)} UTC untuk tiap parameter dan bukan jaminan keadaan aktual saat ini.`;
+  return `Semua waktu berasal dari timestamp paket UTC. XLSX tidak menyimpan zona waktu, sehingga nilai tanggal/waktu ditulis untuk diinterpretasikan sebagai UTC. Rentang laporan adalah ${reportPeriodLabel(period)}. Kolom Set Point di Data hanya mencatat perintah berstatus succeeded pada baris waktu perintah dikirim; sel berikutnya dibiarkan kosong dan tidak pernah diisi maju. Baris peristiwa tanpa telemetri dipertahankan dengan kolom sensor kosong. Status succeeded hanya mengonfirmasi perangkat menerima perintah, bukan stabilitas fisik. Perubahan lokal perangkat tidak dicatat sebagai riwayat perintah; metadata parameter terbaru tersedia di sheet Informasi. Baris konteks adalah perintah sukses terakhir sebelum ${formatUtc(period.start)} UTC untuk tiap parameter dan bukan jaminan keadaan aktual saat ini.`;
 }
 
 export function numberFormat(points: number): string {
@@ -81,24 +83,27 @@ export function safeExportName(label: string): string {
   );
 }
 
-export function buildTableHeader(parameters: ExportParameter[]): {
+export function buildTableHeader(
+  parameters: ExportParameter[],
+  setpoints: ExportParameter[] = [],
+): {
   headers: string[];
   numberFormats: string[];
   info: Array<Array<string | number>>;
 } {
+  const columnLabel = (parameter: ExportParameter, prefix = '') =>
+    `${prefix}${parameter.label}${parameter.unit ? ` (${parameter.unit})` : ''}`;
+  const allParameters = [...parameters, ...setpoints];
   return {
     headers: [
       'timestamp',
-      ...parameters.map((parameter) =>
-        parameter.unit
-          ? `${parameter.label} (${parameter.unit})`
-          : parameter.label,
-      ),
+      ...parameters.map((parameter) => columnLabel(parameter)),
+      ...setpoints.map((parameter) => columnLabel(parameter, 'Set Point ')),
     ],
-    numberFormats: parameters.map((parameter) =>
+    numberFormats: allParameters.map((parameter) =>
       numberFormat(parameter.points),
     ),
-    info: parameters.map((parameter) => [
+    info: allParameters.map((parameter) => [
       parameter.id,
       parameter.label,
       parameter.unit,
@@ -106,6 +111,69 @@ export function buildTableHeader(parameters: ExportParameter[]): {
       'Metadata terbaru diterapkan; perubahan satuan tidak mengonversi nilai histori.',
     ]),
   };
+}
+
+function styleTable(
+  sheet: XLSX.WorkSheet,
+  headerCount: number,
+  rowCount: number,
+  dateColumns: number[],
+  numberFormats: string[] = [],
+  numberStartColumn = 1,
+): void {
+  const range = XLSX.utils.decode_range(sheet['!ref'] ?? 'A1');
+  range.e.c = Math.max(range.e.c, headerCount - 1);
+  range.e.r = Math.max(range.e.r, rowCount);
+  sheet['!ref'] = XLSX.utils.encode_range(range);
+  sheet['!autofilter'] = {
+    ref: `A1:${XLSX.utils.encode_col(headerCount - 1)}${Math.max(1, rowCount + 1)}`,
+  };
+  sheet['!cols'] = Array.from({ length: headerCount }, (_, index) => ({
+    wch: index === 0 ? 22 : 18,
+  }));
+  sheet['!rows'] = [
+    { hpt: 30 },
+    ...Array.from({ length: rowCount }, () => ({ hpt: 20 })),
+  ];
+  for (let column = 0; column < headerCount; column += 1) {
+    const cell = sheet[XLSX.utils.encode_cell({ r: 0, c: column })];
+    if (!cell) continue;
+    cell.s = {
+      fill: { patternType: 'solid', fgColor: { rgb: '1B2A4A' } },
+      font: { color: { rgb: 'FFFFFF' }, bold: true, name: 'Arial', sz: 11 },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+    };
+  }
+  for (let row = 1; row <= rowCount; row += 1) {
+    for (let column = 0; column < headerCount; column += 1) {
+      const address = XLSX.utils.encode_cell({ r: row, c: column });
+      const cell = sheet[address];
+      if (!cell) continue;
+      cell.s = {
+        fill: {
+          patternType: 'solid',
+          fgColor: { rgb: row % 2 ? 'FFFFFF' : 'F7F7F5' },
+        },
+        font: { color: { rgb: '37352F' }, name: 'Arial', sz: 11 },
+        alignment: {
+          horizontal:
+            column === 0 || dateColumns.includes(column) ? 'center' : 'right',
+          vertical: 'center',
+        },
+      };
+    }
+    for (const column of dateColumns) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+      if (cell) cell.z = DATE_FORMAT;
+    }
+    for (let column = 0; column < numberFormats.length; column += 1) {
+      const cell =
+        sheet[
+          XLSX.utils.encode_cell({ r: row, c: numberStartColumn + column })
+        ];
+      if (cell?.t === 'n') cell.z = numberFormats[column];
+    }
+  }
 }
 
 export function buildWorkbookBytes(table: ExportTable): Uint8Array {
@@ -116,14 +184,29 @@ export function buildWorkbookBytes(table: ExportTable): Uint8Array {
     ['parameterId', 'label', 'unit', 'points', 'note'],
     ...table.info,
   ]);
-  for (let row = 1; row <= table.rows.length; row += 1) {
-    const dateCell = dataSheet[XLSX.utils.encode_cell({ r: row, c: 0 })];
-    if (dateCell) dateCell.z = DATE_FORMAT;
-    for (let column = 0; column < table.numberFormats.length; column += 1) {
-      const valueCell =
-        dataSheet[XLSX.utils.encode_cell({ r: row, c: column + 1 })];
-      if (valueCell?.t === 'n') valueCell.z = table.numberFormats[column];
-    }
+  styleTable(
+    dataSheet,
+    table.headers.length,
+    table.rows.length,
+    [0],
+    table.numberFormats,
+  );
+  styleTable(infoSheet, 5, table.info.length, []);
+  infoSheet['!cols'] = [
+    { wch: 22 },
+    { wch: 24 },
+    { wch: 12 },
+    { wch: 10 },
+    { wch: 54 },
+  ];
+  for (let row = 1; row <= table.info.length; row += 1) {
+    const note = infoSheet[XLSX.utils.encode_cell({ r: row, c: 4 })];
+    if (note?.s)
+      note.s.alignment = {
+        horizontal: 'left',
+        vertical: 'center',
+        wrapText: true,
+      };
   }
   const setpointRows = table.setpointHistory?.length
     ? table.setpointHistory.map((row) => [
@@ -152,13 +235,49 @@ export function buildWorkbookBytes(table: ExportTable): Uint8Array {
         { cellDates: true },
       )
     : null;
-  for (let row = 1; row <= (table.setpointHistory?.length ?? 0); row += 1) {
-    const sentAt = setpointSheet![XLSX.utils.encode_cell({ r: row, c: 0 })];
-    const resultAt = setpointSheet![XLSX.utils.encode_cell({ r: row, c: 6 })];
-    const target = setpointSheet![XLSX.utils.encode_cell({ r: row, c: 3 })];
-    if (sentAt) sentAt.z = DATE_FORMAT;
-    if (resultAt) resultAt.z = DATE_FORMAT;
-    if (target?.t === 'n') target.z = '0.##########';
+  if (setpointSheet) {
+    styleTable(
+      setpointSheet,
+      SETPOINT_HEADERS.length,
+      Math.max(table.setpointHistory?.length ?? 0, 1),
+      [0, 6],
+      ['0.##########'],
+      3,
+    );
+    setpointSheet['!cols'] = [
+      { wch: 22 },
+      { wch: 18 },
+      { wch: 24 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 16 },
+      { wch: 22 },
+      { wch: 30 },
+      { wch: 38 },
+      { wch: 44 },
+    ];
+    for (let row = 1; row <= (table.setpointHistory?.length ?? 0); row += 1) {
+      for (const column of [7, 8, 9]) {
+        const cell =
+          setpointSheet[XLSX.utils.encode_cell({ r: row, c: column })];
+        if (cell?.s)
+          cell.s.alignment = {
+            horizontal: 'left',
+            vertical: 'center',
+            wrapText: true,
+          };
+      }
+      setpointSheet['!rows']![row] = { hpt: 36 };
+    }
+    const noteRow = (table.setpointHistory?.length ?? 0) + 3;
+    const note = setpointSheet[XLSX.utils.encode_cell({ r: noteRow, c: 0 })];
+    if (note) {
+      note.s = {
+        font: { color: { rgb: '37352F' }, italic: true, name: 'Arial', sz: 10 },
+        alignment: { horizontal: 'left', vertical: 'top', wrapText: true },
+      };
+      setpointSheet['!rows']![noteRow] = { hpt: 80 };
+    }
   }
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, dataSheet, 'Data');

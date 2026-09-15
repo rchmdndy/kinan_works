@@ -173,6 +173,8 @@ function seedSetpointCommands(): void {
   command('a-newer-old', 'target_a', 1_000_950, 'succeeded', 11, 1_000_955);
   command('b-old', 'target_b', 1_000_925, 'succeeded', 20, 1_000_930);
   command('at-start', 'target_a', 1_001_000, 'pending', 12);
+  command('success-temp', 'target_a', 1_001_025, 'succeeded', 20, 1_001_026);
+  command('success-rh', 'target_b', 1_001_025, 'succeeded', 50, 1_001_027);
   command(
     'rejected',
     'target_b',
@@ -359,22 +361,55 @@ describe('export worker', () => {
         Record<string, string | number>
       >(workbook.Sheets['Riwayat Setpoint']!)
       .filter((row) => typeof row.commandId === 'string');
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(7);
     expect(rows.map((row) => row.commandId)).toEqual([
       'b-old',
       'a-newer-old',
       'at-start',
+      'success-rh',
+      'success-temp',
       'rejected',
       'unknown',
     ]);
     expect(rows[0]!['penanda konteks']).toContain('Konteks sebelum periode');
     expect(rows[1]!['target']).toBe(11);
     expect(rows[2]!['status perintah']).toBe('pending');
+    expect(rows[3]!['status perintah']).toBe('succeeded');
+    expect(rows[4]!['status perintah']).toBe('succeeded');
     expect(rows[2]!['penanda konteks']).toBe(
       'Dalam periode [1970-01-01T00:16:41Z, 1970-01-01T00:16:42Z) UTC (mulai inklusif, akhir eksklusif).',
     );
-    expect(rows[3]!['alasan']).toBe('interlock');
-    expect(rows[4]!['alasan']).toBe('timeout');
+    expect(rows[5]!['alasan']).toBe('interlock');
+    expect(rows[6]!['alasan']).toBe('timeout');
+    const dataRows = XLSX.utils.sheet_to_json<Record<string, string | number>>(
+      workbook.Sheets['Data']!,
+      { defval: '' },
+    );
+    expect(Object.keys(dataRows[0]!)).toEqual([
+      'timestamp',
+      'Suhu (C)',
+      'Set Point Target A (°C)',
+      'Set Point Target B (%)',
+    ]);
+    const sparseSetpoints = dataRows.filter(
+      (row) =>
+        row['Set Point Target A (°C)'] !== '' ||
+        row['Set Point Target B (%)'] !== '',
+    );
+    expect(sparseSetpoints).toHaveLength(2);
+    expect(
+      sparseSetpoints.map((row) => row['Set Point Target A (°C)']),
+    ).toEqual(['', 20]);
+    expect(sparseSetpoints.map((row) => row['Set Point Target B (%)'])).toEqual(
+      [50, ''],
+    );
+    expect(sparseSetpoints.every((row) => row['Suhu (C)'] === '')).toBe(true);
+    expect(dataRows.some((row) => row['Set Point Target A (°C)'] === 12)).toBe(
+      false,
+    );
+    expect(dataRows.some((row) => row['Set Point Target B (%)'] === 21)).toBe(
+      false,
+    );
     expect(rows.every((row) => row.commandId !== 'at-end')).toBe(true);
     expect(rows.every((row) => row.commandId !== 'switch')).toBe(true);
     expect(rows.every((row) => row.commandId !== 'other-device')).toBe(true);
