@@ -1282,20 +1282,43 @@ fieldset {
 }
 
 /* ---------- bits-ui switch ---------- */
+/* Bits UI renders a button; override the app's generic button geometry. */
 .switch-root {
-  width: 40px;
-  height: 22px;
-  flex: 0 0 auto;
+  position: relative;
   display: inline-flex;
+  flex: 0 0 44px;
   align-items: center;
-  border: 1px solid #c3d1e6;
-  border-radius: 999px;
+  justify-content: flex-start;
+  width: 44px;
+  min-width: 44px;
+  height: 24px;
+  min-height: 24px;
+  gap: 0;
   padding: 2px;
-  background: var(--panel-soft);
+  border: 0;
+  border-radius: 999px;
+  background: #e5e7eb;
+  appearance: none;
   cursor: pointer;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease;
+  transition: background-color 0.15s ease;
+}
+.switch-root:hover:not(:disabled) {
+  background: #d1d5db;
+}
+.switch-root[data-state='checked'] {
+  background: #2563eb;
+}
+.switch-root[data-state='checked']:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+.switch-root:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px #dbeafe;
+}
+.switch-root:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 .switch-label {
   display: inline-flex;
@@ -1307,26 +1330,23 @@ fieldset {
   font-size: 0.85rem;
   color: var(--muted);
 }
-.switch-root[data-state='checked'] {
-  border-color: var(--blue);
-  background: var(--blue);
-}
-.switch-root:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 .switch-thumb {
-  width: 16px;
-  height: 16px;
   display: block;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  border: 1px solid #d1d5db;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(30, 42, 58, 0.25);
   transform: translateX(0);
-  transition: transform 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease;
 }
 .switch-root[data-state='checked'] .switch-thumb {
-  transform: translateX(18px);
+  border-color: #fff;
+  transform: translateX(20px);
 }
 
 /* ---------- firmware snippet (DeviceCredential) ---------- */
