@@ -370,6 +370,9 @@ describe('export worker', () => {
     expect(rows[0]!['penanda konteks']).toContain('Konteks sebelum periode');
     expect(rows[1]!['target']).toBe(11);
     expect(rows[2]!['status perintah']).toBe('pending');
+    expect(rows[2]!['penanda konteks']).toBe(
+      'Dalam periode [1970-01-01T00:16:41Z, 1970-01-01T00:16:42Z) UTC (mulai inklusif, akhir eksklusif).',
+    );
     expect(rows[3]!['alasan']).toBe('interlock');
     expect(rows[4]!['alasan']).toBe('timeout');
     expect(rows.every((row) => row.commandId !== 'at-end')).toBe(true);
@@ -401,8 +404,14 @@ describe('export worker', () => {
     const workbook = XLSX.readFile(join(filesDir, result.filePath));
     const sheet = workbook.Sheets['Riwayat Setpoint']!;
     expect(sheet.A1?.v).toBe('waktu dikirim');
-    expect(String(sheet.A2?.v)).toContain('Tidak ada riwayat');
-    expect(String(sheet.A4?.v)).toContain('Semua waktu berasal');
+    expect(String(sheet.A2?.v)).toBe(
+      'Tidak ada riwayat perintah setpoint untuk rentang [1970-01-01T00:50:00Z, 1970-01-01T00:50:00.001Z) UTC (mulai inklusif, akhir eksklusif). Riwayat mencakup perintah yang dikirim dalam rentang tersebut serta konteks terakhir yang berhasil sebelum 1970-01-01T00:50:00Z UTC bila tersedia.',
+    );
+    expect(String(sheet.A4?.v)).toContain(
+      'Rentang laporan adalah [1970-01-01T00:50:00Z, 1970-01-01T00:50:00.001Z) UTC (mulai inklusif, akhir eksklusif).',
+    );
+    expect(String(sheet.A2?.v)).not.toContain('[mulai, akhir)');
+    expect(String(sheet.A4?.v)).not.toContain('[mulai, akhir)');
     emptyStore.close();
   });
 

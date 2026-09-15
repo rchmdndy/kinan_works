@@ -49,6 +49,10 @@ type StoredCommandPacket = {
 
 type Cursor = { timestamp: number; writeId: string };
 
+function formatUtc(timestamp: number): string {
+  return new Date(timestamp).toISOString().replace('.000Z', 'Z');
+}
+
 export class ExportWorker {
   private stopped = false;
   private readonly telemetryDb: SqliteDatabase;
@@ -171,6 +175,9 @@ export class ExportWorker {
       info,
       numberFormats,
       setpointHistory,
+      reportPeriod: hasSetpoints
+        ? { start: new Date(job.start), end: new Date(job.end) }
+        : null,
     });
     const fileName = `${safeExportName(device.label)}-${job.id}.xlsx`;
     const filePath = join(this.config.EXPORTER_FILES_DIR, fileName);
@@ -243,7 +250,7 @@ export class ExportWorker {
       ...context,
       ...inPeriod.map((packet) => ({
         packet,
-        context: 'Dalam periode [mulai, akhir).',
+        context: `Dalam periode [${formatUtc(job.start)}, ${formatUtc(job.end)}) UTC (mulai inklusif, akhir eksklusif).`,
       })),
     ]
       .sort(
