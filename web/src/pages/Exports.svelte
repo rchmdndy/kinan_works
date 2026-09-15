@@ -146,7 +146,8 @@
     <h1>Exports</h1>
     <p>
       Pekerjaan ekspor dijalankan di server; halaman ini hanya memantau status
-      dan mengunduh hasilnya.
+      dan mengunduh hasilnya. Untuk perangkat dengan parameter setpoint, sheet
+      Riwayat Setpoint ditambahkan otomatis.
     </p>
   </div>
 </header>
@@ -162,7 +163,10 @@
       <section>
         <div class="section-heading">
           <h2>Sumber data</h2>
-          <p>Rentang akhir bersifat eksklusif; seluruh sampel diekspor.</p>
+          <p>
+            Rentang akhir bersifat eksklusif [mulai, akhir). Seluruh sampel
+            diekspor; riwayat setpoint memakai timestamp paket perintah.
+          </p>
         </div>
         <div class="export-grid">
           <label
@@ -269,8 +273,13 @@
         >
         <p>
           File memuat sheet <strong>Data</strong> dan
-          <strong>Informasi</strong>. Metadata terbaru diterapkan tanpa
-          mengonversi nilai histori.
+          <strong>Informasi</strong>. Jika device memiliki parameter
+          <strong>control-setpoint</strong>, sheet
+          <strong>Riwayat Setpoint</strong>
+          ditambahkan otomatis: semua status perintah dalam [mulai, akhir) dan konteks
+          sukses terakhir sebelum mulai untuk setiap parameter. Konteks bukan keadaan
+          aktual terjamin; perubahan lokal device tidak tercatat. Metadata terbaru
+          diterapkan tanpa mengonversi nilai histori.
         </p>
       </div>
     </div>
