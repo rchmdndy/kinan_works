@@ -24,6 +24,29 @@ export type WorkerDeviceRow = {
   parameters_json: string;
 };
 
+export type WorkerCommandRow = {
+  id: string;
+  packet_json: string;
+};
+
+type ParameterDefinition = {
+  id: string;
+  label: string;
+  unit: string;
+  points: number;
+  type?: string;
+};
+
+type StoredCommandPacket = {
+  commandId: string;
+  parameterId: string;
+  value: number | boolean;
+  timestamp: number;
+  status: string;
+  reason?: string;
+  result?: { timestamp: number; reason?: string };
+};
+
 type Cursor = { timestamp: number; writeId: string };
 
 export class ExportWorker {
@@ -97,7 +120,7 @@ export class ExportWorker {
       throw new Error('Device tidak dimiliki oleh pengguna.');
     const parameters = JSON.parse(device.parameters_json) as Record<
       string,
-      { id: string; label: string; unit: string; points: number; type?: string }
+      ParameterDefinition
     >;
     const selected = job.parameterIds
       .map((id) => parameters[id])
@@ -109,6 +132,12 @@ export class ExportWorker {
       throw new Error('Parameter yang dipilih tidak tersedia lagi.');
 
     const { headers, numberFormats, info } = buildTableHeader(selected);
+    const hasSetpoints = Object.values(parameters).some(
+      (parameter) => (parameter.type ?? 'nilai') === 'control-setpoint',
+    );
+    const setpointHistory = hasSetpoints
+      ? this.loadSetpointHistory(job, parameters)
+      : null;
     const rows: ExportTable['rows'] = [];
     // Keyset pagination walking from newest to oldest inside [start, end).
     let cursor: Cursor | null = null;
@@ -136,7 +165,13 @@ export class ExportWorker {
         );
     }
     rows.reverse();
-    const bytes = buildWorkbookBytes({ headers, rows, info, numberFormats });
+    const bytes = buildWorkbookBytes({
+      headers,
+      rows,
+      info,
+      numberFormats,
+      setpointHistory,
+    });
     const fileName = `${safeExportName(device.label)}-${job.id}.xlsx`;
     const filePath = join(this.config.EXPORTER_FILES_DIR, fileName);
     await Bun.write(filePath, bytes);
@@ -156,6 +191,84 @@ export class ExportWorker {
         )
         .get(job.deviceId) as WorkerDeviceRow | null) ?? null
     );
+  }
+
+  private loadSetpointHistory(
+    job: ExportJobRecord,
+    parameters: Record<string, ParameterDefinition>,
+  ): ExportTable['setpointHistory'] {
+    const rows = this.telemetryDb
+      .query(
+        `SELECT id, packet_json FROM device_commands
+         WHERE device_id = ?
+           AND json_extract(packet_json, '$.parameterId') IS NOT NULL
+         ORDER BY json_extract(packet_json, '$.timestamp') ASC, id ASC`,
+      )
+      .all(job.deviceId) as WorkerCommandRow[];
+    const history = rows
+      .map((row) => {
+        try {
+          return JSON.parse(row.packet_json) as StoredCommandPacket;
+        } catch {
+          return null;
+        }
+      })
+      .filter((packet): packet is StoredCommandPacket => packet !== null)
+      .map((packet) => ({ packet }))
+      .filter(({ packet }) => {
+        const parameter = parameters[packet.parameterId];
+        return (
+          (parameter?.type ?? 'nilai') === 'control-setpoint' &&
+          typeof packet.value === 'number' &&
+          Number.isFinite(packet.timestamp)
+        );
+      });
+    const latestSuccessfulBeforeStart = new Map<string, StoredCommandPacket>();
+    const inPeriod: StoredCommandPacket[] = [];
+    for (const { packet } of history) {
+      if (packet.timestamp >= job.start && packet.timestamp < job.end) {
+        inPeriod.push(packet);
+      } else if (
+        packet.timestamp < job.start &&
+        packet.status === 'succeeded'
+      ) {
+        latestSuccessfulBeforeStart.set(packet.parameterId, packet);
+      }
+    }
+    const context = [...latestSuccessfulBeforeStart.values()].map((packet) => ({
+      packet,
+      context: 'Konteks sebelum periode; bukan keadaan aktual terjamin.',
+    }));
+    return [
+      ...context,
+      ...inPeriod.map((packet) => ({
+        packet,
+        context: 'Dalam periode [mulai, akhir).',
+      })),
+    ]
+      .sort(
+        (a, b) =>
+          a.packet.timestamp - b.packet.timestamp ||
+          a.packet.commandId.localeCompare(b.packet.commandId),
+      )
+      .map(({ packet, context }) => {
+        const parameter = parameters[packet.parameterId]!;
+        return {
+          sentAt: new Date(packet.timestamp),
+          parameterId: parameter.id,
+          label: parameter.label,
+          target: packet.value as number,
+          unit: parameter.unit,
+          status: packet.status,
+          resultAt:
+            typeof packet.result?.timestamp === 'number'
+              ? new Date(packet.result.timestamp)
+              : '',
+          reason: packet.reason ?? packet.result?.reason ?? '',
+          commandId: packet.commandId,
+          context,
+        };
+      });
   }
 
   private fetchPage(

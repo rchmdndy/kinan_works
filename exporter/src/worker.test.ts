@@ -40,7 +40,11 @@ function seedTelemetry(count: number, sameTimestamp = false): void {
   db.exec(
     `CREATE TABLE IF NOT EXISTS telemetry_latest (device_id TEXT PRIMARY KEY, write_id TEXT NOT NULL, timestamp INTEGER NOT NULL, credential_version INTEGER NOT NULL, values_json TEXT NOT NULL, received_at INTEGER NOT NULL);`,
   );
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS device_commands (id TEXT PRIMARY KEY, device_id TEXT NOT NULL, expires_at INTEGER NOT NULL, status TEXT NOT NULL, packet_json TEXT NOT NULL);`,
+  );
   db.query('DELETE FROM telemetry').run();
+  db.query('DELETE FROM device_commands').run();
   db.query('DELETE FROM devices').run();
   const parametersJson = JSON.stringify({
     p1: { id: 'p1', label: 'Suhu', unit: 'C', points: 1, type: 'nilai' },
@@ -87,6 +91,122 @@ function seedTelemetry(count: number, sameTimestamp = false): void {
   db.close();
 }
 
+function seedSetpointCommands(): void {
+  const db = new SqliteDatabase(telemetryPath);
+  const parameters = JSON.stringify({
+    p1: { id: 'p1', label: 'Suhu', unit: 'C', points: 1, type: 'nilai' },
+    target_a: {
+      id: 'target_a',
+      label: 'Target A',
+      unit: '°C',
+      points: 1,
+      type: 'control-setpoint',
+      min: 0,
+      max: 100,
+    },
+    target_b: {
+      id: 'target_b',
+      label: 'Target B',
+      unit: '%',
+      points: 0,
+      type: 'control-setpoint',
+      min: 0,
+      max: 100,
+    },
+    switch_1: {
+      id: 'switch_1',
+      label: 'Saklar',
+      unit: '',
+      points: 0,
+      type: 'control-state',
+    },
+  });
+  db.query('UPDATE devices SET parameters_json = ? WHERE id = ?').run(
+    parameters,
+    deviceId,
+  );
+  const insert = db.query(
+    'INSERT INTO device_commands(id, device_id, expires_at, status, packet_json) VALUES (?, ?, ?, ?, ?)',
+  );
+  const command = (
+    id: string,
+    parameterId: string,
+    timestamp: number,
+    status: string,
+    value: number | boolean,
+    resultTimestamp?: number,
+    reason?: string,
+    sourceDevice = deviceId,
+  ) =>
+    insert.run(
+      id,
+      sourceDevice,
+      timestamp + 10_000,
+      status,
+      JSON.stringify({
+        commandId: id,
+        deviceId: sourceDevice,
+        parameterId,
+        timestamp,
+        expiresAt: timestamp + 10_000,
+        revision: 0,
+        credentialVersion: 1,
+        connectionId: '11111111-1111-4111-8111-111111111111',
+        value,
+        status,
+        ...(reason ? { reason } : {}),
+        ...(resultTimestamp
+          ? {
+              result: {
+                commandId: id,
+                timestamp: resultTimestamp,
+                credentialVersion: 1,
+                connectionId: '11111111-1111-4111-8111-111111111111',
+                status: status === 'succeeded' ? 'succeeded' : 'rejected',
+                ...(reason ? { reason } : {}),
+              },
+            }
+          : {}),
+      }),
+    );
+  command('a-old', 'target_a', 1_000_900, 'succeeded', 10, 1_000_905);
+  command('a-newer-old', 'target_a', 1_000_950, 'succeeded', 11, 1_000_955);
+  command('b-old', 'target_b', 1_000_925, 'succeeded', 20, 1_000_930);
+  command('at-start', 'target_a', 1_001_000, 'pending', 12);
+  command(
+    'rejected',
+    'target_b',
+    1_001_100,
+    'rejected',
+    21,
+    1_001_120,
+    'interlock',
+  );
+  command(
+    'unknown',
+    'target_a',
+    1_001_200,
+    'unknown',
+    13,
+    undefined,
+    'timeout',
+  );
+  command('at-end', 'target_a', 1_002_000, 'succeeded', 14, 1_002_005);
+  command('switch', 'switch_1', 1_001_150, 'succeeded', true, 1_001_155);
+  command(
+    'other-device',
+    'target_a',
+    1_001_150,
+    'succeeded',
+    30,
+    1_001_155,
+    undefined,
+    'device_2',
+  );
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+  db.close();
+}
+
 function makeJob(): ExportJobRecord {
   return store.createJob(
     {
@@ -123,6 +243,7 @@ describe('export worker', () => {
     expect(result.rowCount).toBe(10);
     expect(existsSync(join(filesDir, result.filePath))).toBe(true);
     const workbook = XLSX.readFile(join(filesDir, result.filePath));
+    expect(workbook.SheetNames).toEqual(['Data', 'Informasi']);
     const sheet = XLSX.utils.sheet_to_json<Record<string, string | number>>(
       workbook.Sheets['Data']!,
     );
@@ -203,6 +324,86 @@ describe('export worker', () => {
       /batas maksimum/,
     );
     limitedStore.close();
+  });
+
+  test('writes full setpoint command history with explicit pre-period context', async () => {
+    seedTelemetry(55);
+    seedSetpointCommands();
+    const setpointStore = new ExportStore(`${tmp}/setpoint.sqlite`);
+    const setpointWorker = new ExportWorker(setpointStore, {
+      ...config,
+      EXPORTER_PAGE_ROWS: 2,
+    });
+    const job = setpointStore.createJob(
+      {
+        userId: 'user_1',
+        deviceId,
+        parameterIds: ['p1'],
+        start: 1_001_000,
+        end: 1_002_000,
+      },
+      'Demo device',
+    );
+    const result = await setpointWorker.runExport(job);
+    expect(result.rowCount).toBe(0);
+    const workbook = XLSX.readFile(join(filesDir, result.filePath), {
+      cellDates: true,
+    });
+    expect(workbook.SheetNames).toEqual([
+      'Data',
+      'Informasi',
+      'Riwayat Setpoint',
+    ]);
+    const rows = XLSX.utils
+      .sheet_to_json<
+        Record<string, string | number>
+      >(workbook.Sheets['Riwayat Setpoint']!)
+      .filter((row) => typeof row.commandId === 'string');
+    expect(rows).toHaveLength(5);
+    expect(rows.map((row) => row.commandId)).toEqual([
+      'b-old',
+      'a-newer-old',
+      'at-start',
+      'rejected',
+      'unknown',
+    ]);
+    expect(rows[0]!['penanda konteks']).toContain('Konteks sebelum periode');
+    expect(rows[1]!['target']).toBe(11);
+    expect(rows[2]!['status perintah']).toBe('pending');
+    expect(rows[3]!['alasan']).toBe('interlock');
+    expect(rows[4]!['alasan']).toBe('timeout');
+    expect(rows.every((row) => row.commandId !== 'at-end')).toBe(true);
+    expect(rows.every((row) => row.commandId !== 'switch')).toBe(true);
+    expect(rows.every((row) => row.commandId !== 'other-device')).toBe(true);
+    setpointStore.close();
+  });
+
+  test('writes an explained empty setpoint history sheet', async () => {
+    seedTelemetry(1);
+    seedSetpointCommands();
+    const db = new SqliteDatabase(telemetryPath);
+    db.query('DELETE FROM device_commands').run();
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    db.close();
+    const emptyStore = new ExportStore(`${tmp}/empty-setpoint.sqlite`);
+    const emptyWorker = new ExportWorker(emptyStore, config);
+    const job = emptyStore.createJob(
+      {
+        userId: 'user_1',
+        deviceId,
+        parameterIds: ['p1'],
+        start: 3_000_000,
+        end: 3_000_001,
+      },
+      'Demo device',
+    );
+    const result = await emptyWorker.runExport(job);
+    const workbook = XLSX.readFile(join(filesDir, result.filePath));
+    const sheet = workbook.Sheets['Riwayat Setpoint']!;
+    expect(sheet.A1?.v).toBe('waktu dikirim');
+    expect(String(sheet.A2?.v)).toContain('Tidak ada riwayat');
+    expect(String(sheet.A4?.v)).toContain('Semua waktu berasal');
+    emptyStore.close();
   });
 
   test('prunes finished files after retention', async () => {
