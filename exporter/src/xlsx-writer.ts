@@ -242,7 +242,9 @@ export function buildWorkbookBytes(table: ExportTable): Uint8Array {
         row.target,
         row.unit,
         row.status,
-        typeof row.resultAt === 'number' ? wibSerial(row.resultAt) : row.resultAt,
+        typeof row.resultAt === 'number'
+          ? wibSerial(row.resultAt)
+          : row.resultAt,
         row.reason,
         row.commandId,
         row.context,
@@ -251,14 +253,12 @@ export function buildWorkbookBytes(table: ExportTable): Uint8Array {
       ? [[setpointEmptyNote(table.reportPeriod!)]]
       : null;
   const setpointSheet = setpointRows
-    ? XLSX.utils.aoa_to_sheet(
-        [
-          SETPOINT_HEADERS,
-          ...setpointRows,
-          [],
-          [setpointInfoNote(table.reportPeriod!)],
-        ],
-      )
+    ? XLSX.utils.aoa_to_sheet([
+        SETPOINT_HEADERS,
+        ...setpointRows,
+        [],
+        [setpointInfoNote(table.reportPeriod!)],
+      ])
     : null;
   if (setpointSheet) {
     styleTable(
