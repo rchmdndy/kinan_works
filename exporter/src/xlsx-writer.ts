@@ -58,10 +58,6 @@ const SETPOINT_HEADERS = [
   'penanda konteks',
 ];
 
-function formatUtc(timestamp: number): string {
-  return new Date(timestamp).toISOString().replace('.000Z', 'Z');
-}
-
 export function formatWib(timestamp: number): string {
   return new Date(timestamp + WIB_OFFSET_MS)
     .toISOString()
