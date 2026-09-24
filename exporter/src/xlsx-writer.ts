@@ -9,14 +9,26 @@ export type ExportParameter = {
 
 const DATE_FORMAT = 'yyyy-mm-dd hh:mm:ss';
 
+// Excel stores dates as timezone-less serial numbers; SheetJS derives them
+// from the writer's local time, which made exported times shift with the
+// container timezone. Pin the display to WIB (UTC+7) instead: convert the
+// epoch to the WIB wall clock and serialise that as if it were UTC, so the
+// serial no longer depends on the writer's TZ.
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+const EPOCH_SERIAL = 25569; // serial of 1970-01-01 00:00:00
+
+export function wibSerial(epochMs: number): number {
+  return (epochMs + WIB_OFFSET_MS) / 86_400_000 + EPOCH_SERIAL;
+}
+
 export type SetpointHistoryRow = {
-  sentAt: Date;
+  sentAt: number;
   parameterId: string;
   label: string;
   target: number;
   unit: string;
   status: string;
-  resultAt: Date | '';
+  resultAt: number | '';
   reason: string;
   commandId: string;
   context: string;
@@ -24,13 +36,13 @@ export type SetpointHistoryRow = {
 
 export type ExportTable = {
   headers: string[];
-  rows: Array<Array<string | number | Date>>;
+  rows: Array<Array<string | number>>;
   info: Array<Array<string | number>>;
   numberFormats: string[];
   sensorColumnCount: number;
   setpointColumnCount: number;
   setpointHistory: SetpointHistoryRow[] | null;
-  reportPeriod: { start: Date; end: Date } | null;
+  reportPeriod: { start: number; end: number } | null;
 };
 
 const SETPOINT_HEADERS = [
@@ -46,27 +58,34 @@ const SETPOINT_HEADERS = [
   'penanda konteks',
 ];
 
-function formatUtc(timestamp: Date): string {
-  return timestamp.toISOString().replace('.000Z', 'Z');
+function formatUtc(timestamp: number): string {
+  return new Date(timestamp).toISOString().replace('.000Z', 'Z');
+}
+
+export function formatWib(timestamp: number): string {
+  return new Date(timestamp + WIB_OFFSET_MS)
+    .toISOString()
+    .replace(/\.\d{3}Z$/, '')
+    .replace('T', ' ');
 }
 
 function reportPeriodLabel({
   start,
   end,
 }: NonNullable<ExportTable['reportPeriod']>): string {
-  return `[${formatUtc(start)}, ${formatUtc(end)}) UTC (mulai inklusif, akhir eksklusif)`;
+  return `${formatWib(start)} – ${formatWib(end)} WIB (mulai inklusif, akhir eksklusif)`;
 }
 
 function setpointEmptyNote(
   period: NonNullable<ExportTable['reportPeriod']>,
 ): string {
-  return `Tidak ada riwayat perintah setpoint untuk rentang ${reportPeriodLabel(period)}. Riwayat mencakup perintah yang dikirim dalam rentang tersebut serta konteks terakhir yang berhasil sebelum ${formatUtc(period.start)} UTC bila tersedia.`;
+  return `Tidak ada riwayat perintah setpoint untuk rentang ${reportPeriodLabel(period)}. Riwayat mencakup perintah yang dikirim dalam rentang tersebut serta konteks terakhir yang berhasil sebelum ${formatWib(period.start)} WIB bila tersedia.`;
 }
 
 function setpointInfoNote(
   period: NonNullable<ExportTable['reportPeriod']>,
 ): string {
-  return `Semua waktu berasal dari timestamp paket UTC. XLSX tidak menyimpan zona waktu, sehingga nilai tanggal/waktu ditulis untuk diinterpretasikan sebagai UTC. Rentang laporan adalah ${reportPeriodLabel(period)}. Kolom Set Point di Data hanya mencatat perintah berstatus succeeded pada baris waktu perintah dikirim; sel berikutnya dibiarkan kosong dan tidak pernah diisi maju. Baris peristiwa tanpa telemetri dipertahankan dengan kolom sensor kosong. Status succeeded hanya mengonfirmasi perangkat menerima perintah, bukan stabilitas fisik. Perubahan lokal perangkat tidak dicatat sebagai riwayat perintah; metadata parameter terbaru tersedia di sheet Informasi. Baris konteks adalah perintah sukses terakhir sebelum ${formatUtc(period.start)} UTC untuk tiap parameter dan bukan jaminan keadaan aktual saat ini.`;
+  return `Waktu ditampilkan dalam WIB (UTC+7). Rentang laporan adalah ${reportPeriodLabel(period)}. Kolom Set Point di Data hanya mencatat perintah berstatus succeeded pada baris waktu perintah dikirim; sel berikutnya dibiarkan kosong dan tidak pernah diisi maju. Baris peristiwa tanpa telemetri dipertahankan dengan kolom sensor kosong. Status succeeded hanya mengonfirmasi perangkat menerima perintah, bukan stabilitas fisik. Perubahan lokal perangkat tidak dicatat sebagai riwayat perintah; metadata parameter terbaru tersedia di sheet Informasi. Baris konteks adalah perintah sukses terakhir sebelum ${formatWib(period.start)} WIB untuk tiap parameter dan bukan jaminan keadaan aktual saat ini.`;
 }
 
 export function numberFormat(points: number): string {
@@ -177,9 +196,16 @@ function styleTable(
 }
 
 export function buildWorkbookBytes(table: ExportTable): Uint8Array {
-  const dataSheet = XLSX.utils.aoa_to_sheet([table.headers, ...table.rows], {
-    cellDates: true,
-  });
+  // Date columns carry epoch-ms values; serialise them to the WIB wall clock
+  // here so nothing downstream depends on the writer's timezone.
+  const dataSheet = XLSX.utils.aoa_to_sheet([
+    table.headers,
+    ...table.rows.map((row) =>
+      row.map((value, column) =>
+        column === 0 && typeof value === 'number' ? wibSerial(value) : value,
+      ),
+    ),
+  ]);
   const infoSheet = XLSX.utils.aoa_to_sheet([
     ['parameterId', 'label', 'unit', 'points', 'note'],
     ...table.info,
@@ -210,13 +236,13 @@ export function buildWorkbookBytes(table: ExportTable): Uint8Array {
   }
   const setpointRows = table.setpointHistory?.length
     ? table.setpointHistory.map((row) => [
-        row.sentAt,
+        wibSerial(row.sentAt),
         row.parameterId,
         row.label,
         row.target,
         row.unit,
         row.status,
-        row.resultAt,
+        typeof row.resultAt === 'number' ? wibSerial(row.resultAt) : row.resultAt,
         row.reason,
         row.commandId,
         row.context,
@@ -232,7 +258,6 @@ export function buildWorkbookBytes(table: ExportTable): Uint8Array {
           [],
           [setpointInfoNote(table.reportPeriod!)],
         ],
-        { cellDates: true },
       )
     : null;
   if (setpointSheet) {

@@ -7,6 +7,7 @@ import { ExportStore } from './store';
 import {
   buildTableHeader,
   buildWorkbookBytes,
+  formatWib,
   safeExportName,
   type ExportTable,
 } from './xlsx-writer';
@@ -48,10 +49,6 @@ type StoredCommandPacket = {
 };
 
 type Cursor = { timestamp: number; writeId: string };
-
-function formatUtc(timestamp: number): string {
-  return new Date(timestamp).toISOString().replace('.000Z', 'Z');
-}
 
 export class ExportWorker {
   private stopped = false;
@@ -162,8 +159,7 @@ export class ExportWorker {
     }
     telemetryRows.reverse();
     const events = (setpointHistory ?? []).filter(
-      (row) =>
-        row.sentAt.getTime() >= job.start && row.sentAt.getTime() < job.end,
+      (row) => row.sentAt >= job.start && row.sentAt < job.end,
     );
     const rows: ExportTable['rows'] = [
       ...telemetryRows.map((row) => ({
@@ -176,7 +172,7 @@ export class ExportWorker {
         >,
       })),
       ...events.map((event) => ({
-        timestamp: event.sentAt.getTime(),
+        timestamp: event.sentAt,
         order: 0,
         key: event.commandId,
         event,
@@ -197,13 +193,13 @@ export class ExportWorker {
               : '',
           );
           return [
-            new Date(entry.timestamp),
+            entry.timestamp,
             ...selected.map(() => ''),
             ...setpointValues,
           ];
         }
         return [
-          new Date(entry.timestamp),
+          entry.timestamp,
           ...selected.map((parameter) => {
             const reading = entry.values[parameter.id];
             return reading?.status === 'ok' ? (reading.value as number) : '';
@@ -219,9 +215,7 @@ export class ExportWorker {
       sensorColumnCount: selected.length,
       setpointColumnCount: setpoints.length,
       setpointHistory,
-      reportPeriod: hasSetpoints
-        ? { start: new Date(job.start), end: new Date(job.end) }
-        : null,
+      reportPeriod: hasSetpoints ? { start: job.start, end: job.end } : null,
     });
     const fileName = `${safeExportName(device.label)}-${job.id}.xlsx`;
     const filePath = join(this.config.EXPORTER_FILES_DIR, fileName);
@@ -294,7 +288,7 @@ export class ExportWorker {
       ...context,
       ...inPeriod.map((packet) => ({
         packet,
-        context: `Dalam periode [${formatUtc(job.start)}, ${formatUtc(job.end)}) UTC (mulai inklusif, akhir eksklusif).`,
+        context: `Dalam periode ${formatWib(job.start)} – ${formatWib(job.end)} WIB (mulai inklusif, akhir eksklusif).`,
       })),
     ]
       .sort(
@@ -305,7 +299,7 @@ export class ExportWorker {
       .map(({ packet, context }) => {
         const parameter = parameters[packet.parameterId]!;
         return {
-          sentAt: new Date(packet.timestamp),
+          sentAt: packet.timestamp,
           parameterId: parameter.id,
           label: parameter.label,
           target: packet.value as number,
@@ -313,7 +307,7 @@ export class ExportWorker {
           status: packet.status,
           resultAt:
             typeof packet.result?.timestamp === 'number'
-              ? new Date(packet.result.timestamp)
+              ? packet.result.timestamp
               : '',
           reason: packet.reason ?? packet.result?.reason ?? '',
           commandId: packet.commandId,

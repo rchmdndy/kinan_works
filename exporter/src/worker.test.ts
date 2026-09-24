@@ -5,6 +5,7 @@ import { Database as SqliteDatabase } from 'bun:sqlite';
 import * as XLSX from 'xlsx';
 import { ExportStore } from './store';
 import { ExportWorker } from './worker';
+import { wibSerial } from './xlsx-writer';
 import type { ExporterConfig } from './config';
 import type { ExportJobRecord } from './types';
 
@@ -348,9 +349,7 @@ describe('export worker', () => {
     );
     const result = await setpointWorker.runExport(job);
     expect(result.rowCount).toBe(0);
-    const workbook = XLSX.readFile(join(filesDir, result.filePath), {
-      cellDates: true,
-    });
+    const workbook = XLSX.readFile(join(filesDir, result.filePath));
     expect(workbook.SheetNames).toEqual([
       'Data',
       'Informasi',
@@ -377,7 +376,7 @@ describe('export worker', () => {
     expect(rows[3]!['status perintah']).toBe('succeeded');
     expect(rows[4]!['status perintah']).toBe('succeeded');
     expect(rows[2]!['penanda konteks']).toBe(
-      'Dalam periode [1970-01-01T00:16:41Z, 1970-01-01T00:16:42Z) UTC (mulai inklusif, akhir eksklusif).',
+      'Dalam periode 1970-01-01 07:16:41 – 1970-01-01 07:16:42 WIB (mulai inklusif, akhir eksklusif).',
     );
     expect(rows[5]!['alasan']).toBe('interlock');
     expect(rows[6]!['alasan']).toBe('timeout');
@@ -440,10 +439,10 @@ describe('export worker', () => {
     const sheet = workbook.Sheets['Riwayat Setpoint']!;
     expect(sheet.A1?.v).toBe('waktu dikirim');
     expect(String(sheet.A2?.v)).toBe(
-      'Tidak ada riwayat perintah setpoint untuk rentang [1970-01-01T00:50:00Z, 1970-01-01T00:50:00.001Z) UTC (mulai inklusif, akhir eksklusif). Riwayat mencakup perintah yang dikirim dalam rentang tersebut serta konteks terakhir yang berhasil sebelum 1970-01-01T00:50:00Z UTC bila tersedia.',
+      'Tidak ada riwayat perintah setpoint untuk rentang 1970-01-01 07:50:00 – 1970-01-01 07:50:00 WIB (mulai inklusif, akhir eksklusif). Riwayat mencakup perintah yang dikirim dalam rentang tersebut serta konteks terakhir yang berhasil sebelum 1970-01-01 07:50:00 WIB bila tersedia.',
     );
     expect(String(sheet.A4?.v)).toContain(
-      'Rentang laporan adalah [1970-01-01T00:50:00Z, 1970-01-01T00:50:00.001Z) UTC (mulai inklusif, akhir eksklusif).',
+      'Rentang laporan adalah 1970-01-01 07:50:00 – 1970-01-01 07:50:00 WIB (mulai inklusif, akhir eksklusif).',
     );
     expect(String(sheet.A2?.v)).not.toContain('[mulai, akhir)');
     expect(String(sheet.A4?.v)).not.toContain('[mulai, akhir)');
@@ -469,5 +468,45 @@ describe('export worker', () => {
     expect(removed).toContain(result.filePath);
     rmSync(filePath, { force: true });
     expect(existsSync(filePath)).toBe(false);
+  });
+
+  test('serialises timestamps as WIB wall clock regardless of writer TZ', async () => {
+    // 2026-09-23T15:30:09.918Z = 22:30:09.918 WIB (the reported bug's first row)
+    const epochMs = 1_790_177_409_918;
+    expect(wibSerial(epochMs)).toBe(
+      Date.UTC(2026, 8, 23, 22, 30, 9, 918) / 86_400_000 + 25_569,
+    );
+    seedTelemetry(1);
+    // Point the single seeded row at the known epoch (read-only worker needs
+    // the WAL flushed first).
+    const db = new SqliteDatabase(telemetryPath);
+    db.query('UPDATE telemetry SET timestamp = ?').run(epochMs);
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    db.close();
+    const wibJob = store.createJob(
+      {
+        userId: 'user_1',
+        deviceId,
+        parameterIds: ['p1'],
+        start: epochMs - 1_000,
+        end: epochMs + 1_000,
+      },
+      'Demo device',
+    );
+    const result = await worker.runExport(wibJob);
+    const workbook = XLSX.readFile(join(filesDir, result.filePath));
+    const first = workbook.Sheets['Data']!['A2'];
+    expect(first?.t).toBe('n');
+    expect(first?.v).toBe(wibSerial(epochMs));
+    const displayed = XLSX.SSF.parse_date_code(first!.v as number);
+    expect(displayed).toMatchObject({
+      H: 22,
+      M: 30,
+      S: 9,
+      d: 23,
+      m: 9,
+      y: 2026,
+    });
+    store.close();
   });
 });
