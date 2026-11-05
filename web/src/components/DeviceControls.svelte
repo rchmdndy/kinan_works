@@ -30,6 +30,35 @@
   let message = $state('');
   let drafts = $state<Record<string, string>>({});
   let unresolved = $state<CommandInput | null>(null);
+  // Command history view: the server sends at most 50 recent commands.
+  const pageSizes = [5, 10, 25, 50];
+  let historyOpen = $state(true);
+  let pageSize = $state(5);
+  let page = $state(1);
+  // Empty = show every parameter.
+  let parameterFilter = $state<string[]>([]);
+  const filteredCommands = $derived(
+    (snapshot?.commands ?? []).filter(
+      (c) => !parameterFilter.length || parameterFilter.includes(c.parameterId),
+    ),
+  );
+  const pageCount = $derived(
+    Math.max(1, Math.ceil(filteredCommands.length / pageSize)),
+  );
+  const currentPage = $derived(Math.min(page, pageCount));
+  const visibleCommands = $derived(
+    filteredCommands.slice(
+      (currentPage - 1) * pageSize,
+      currentPage * pageSize,
+    ),
+  );
+  function toggleFilter(id: string) {
+    parameterFilter = parameterFilter.includes(id)
+      ? parameterFilter.filter((item) => item !== id)
+      : [...parameterFilter, id];
+    if (parameterFilter.length >= controls.length) parameterFilter = [];
+    page = 1;
+  }
   const canSend = $derived(
     device.active &&
       connected &&
@@ -247,47 +276,132 @@
         onclick={() => unresolved && send(unresolved)}
         >Periksa ulang ID yang sama</button
       >{/if}
-    <h3>Perintah terakhir</h3>
-    <p class="control-note">
-      Menunggu hasil berarti perangkat belum menjawab. Hasil tidak diketahui
-      berarti perangkat mungkin sudah menjalankan perintah — timeout bukan bukti
-      kegagalan.
-    </p>
-    {#if snapshot?.commands.length}<ul class="command-list">
-        {#each snapshot.commands.slice(0, 10) as command (command.commandId)}{@const described =
-            describeCommand(command)}
-          <li class="command-item">
-            <div class="command-main">
-              <strong>{described.label}</strong>
-              <span class="command-value"
-                >{described.value === 'Nyala'
-                  ? 'dinyalakan'
-                  : described.value === 'Mati'
-                    ? 'dimatikan'
-                    : `diatur ke ${described.value}`}</span
+    <button
+      type="button"
+      class="history-toggle"
+      aria-expanded={historyOpen}
+      aria-controls="command-history"
+      onclick={() => (historyOpen = !historyOpen)}
+    >
+      <span class="history-title">Riwayat perintah</span>
+      <span class="history-count"
+        >{filteredCommands.length}{parameterFilter.length
+          ? ` dari ${snapshot?.commands.length ?? 0}`
+          : ''}</span
+      >
+      <svg
+        class="history-chevron"
+        class:open={historyOpen}
+        viewBox="0 0 16 16"
+        width="16"
+        height="16"
+        aria-hidden="true"
+        ><path
+          d="M4 6l4 4 4-4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        /></svg
+      >
+    </button>
+    {#if historyOpen}<div id="command-history">
+        <p class="control-note">
+          Menunggu hasil berarti perangkat belum menjawab. Hasil tidak diketahui
+          berarti perangkat mungkin sudah menjalankan perintah — timeout bukan
+          bukti kegagalan.
+        </p>
+        {#if controls.length}<fieldset class="history-filter">
+            <legend>Tampilkan parameter</legend>
+            <label
+              ><input
+                type="checkbox"
+                checked={!parameterFilter.length}
+                onchange={() => {
+                  parameterFilter = [];
+                  page = 1;
+                }}
+              />Semua</label
+            >{#each controls as control (control.id)}<label
+                ><input
+                  type="checkbox"
+                  checked={parameterFilter.includes(control.id)}
+                  onchange={() => toggleFilter(control.id)}
+                />{control.label}</label
+              >{/each}
+          </fieldset>{/if}
+        {#if visibleCommands.length}<ul class="command-list">
+            {#each visibleCommands as command (command.commandId)}{@const described =
+                describeCommand(command)}
+              <li class="command-item">
+                <div class="command-main">
+                  <strong>{described.label}</strong>
+                  <span class="command-value"
+                    >{described.value === 'Nyala'
+                      ? 'dinyalakan'
+                      : described.value === 'Mati'
+                        ? 'dimatikan'
+                        : `diatur ke ${described.value}`}</span
+                  >
+                </div>
+                <span
+                  class="command-status"
+                  class:pending={command.status === 'pending'}
+                  class:unknown={command.status === 'unknown'}
+                  class:succeeded={command.status === 'succeeded'}
+                  class:rejected={command.status === 'rejected'}
+                  >{formatCommandStatus(command.status)}</span
+                >
+                <small>
+                  {new Date(command.timestamp).toLocaleString('id-ID')}
+                  {#if command.reason}
+                    · {command.reason}{/if}
+                  {#if command.status === 'pending' && command.expiresAt}
+                    · berlaku hingga {new Date(
+                      command.expiresAt,
+                    ).toLocaleTimeString('id-ID')}
+                  {/if}
+                  · ID {command.commandId.slice(0, 8)}
+                </small>
+              </li>{/each}
+          </ul>{:else}<p class="control-note">
+            {snapshot?.commands.length
+              ? 'Tidak ada perintah untuk parameter yang dipilih.'
+              : 'Belum ada perintah.'}
+          </p>{/if}
+        {#if filteredCommands.length}<div class="history-pager">
+            <label class="page-size"
+              >Per halaman<select
+                value={pageSize}
+                onchange={(event) => {
+                  pageSize = Number(event.currentTarget.value);
+                  page = 1;
+                }}
+                >{#each pageSizes as size (size)}<option value={size}
+                    >{size}</option
+                  >{/each}</select
+              ></label
+            >
+            <span class="page-info" aria-live="polite"
+              >Halaman {currentPage} dari {pageCount}</span
+            >
+            <div class="page-buttons">
+              <button
+                type="button"
+                class="button secondary"
+                disabled={currentPage <= 1}
+                onclick={() => (page = currentPage - 1)}>Sebelumnya</button
+              >
+              <button
+                type="button"
+                class="button secondary"
+                disabled={currentPage >= pageCount}
+                onclick={() => (page = currentPage + 1)}>Berikutnya</button
               >
             </div>
-            <span
-              class="command-status"
-              class:pending={command.status === 'pending'}
-              class:unknown={command.status === 'unknown'}
-              class:succeeded={command.status === 'succeeded'}
-              class:rejected={command.status === 'rejected'}
-              >{formatCommandStatus(command.status)}</span
-            >
-            <small>
-              {new Date(command.timestamp).toLocaleString('id-ID')}
-              {#if command.reason}
-                · {command.reason}{/if}
-              {#if command.status === 'pending' && command.expiresAt}
-                · berlaku hingga {new Date(
-                  command.expiresAt,
-                ).toLocaleTimeString('id-ID')}
-              {/if}
-              · ID {command.commandId.slice(0, 8)}
-            </small>
-          </li>{/each}
-      </ul>{:else}<p class="control-note">Belum ada perintah.</p>{/if}
+          </div>{/if}
+      </div>{/if}
   </div>
 </section>
 
@@ -411,7 +525,7 @@
     padding: 0;
     font-size: 1.25rem;
   }
-  input {
+  input[type='number'] {
     width: 100%;
     min-width: 0;
     min-height: 44px;
@@ -439,8 +553,100 @@
   .control-history {
     padding: 20px;
   }
-  .control-history h3 {
-    margin-block: 16px 8px;
+  .history-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 44px;
+    margin-top: 12px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--ink);
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: left;
+  }
+  .history-toggle:hover:not(:disabled) {
+    background: none;
+  }
+  .history-title {
+    flex: 1;
+  }
+  .history-count {
+    border-radius: 999px;
+    padding: 2px 10px;
+    background: var(--panel-soft);
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 500;
+  }
+  .history-chevron {
+    flex: none;
+    color: var(--muted);
+    transition: transform 150ms ease-out;
+  }
+  .history-chevron.open {
+    transform: rotate(180deg);
+  }
+  .history-filter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    margin: 12px 0;
+    border: 0;
+    padding: 0;
+  }
+  .history-filter legend {
+    float: left;
+    margin-right: 14px;
+    color: var(--muted);
+    font-size: 0.74rem;
+    font-weight: 500;
+  }
+  .history-filter label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.76rem;
+  }
+  .history-pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .page-size {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.76rem;
+  }
+  .page-size select {
+    width: auto;
+    min-height: 36px;
+    padding-block: 4px;
+  }
+  .page-info {
+    color: var(--muted);
+    font-size: 0.76rem;
+  }
+  .page-buttons {
+    display: flex;
+    gap: 8px;
+  }
+  .page-buttons .button {
+    min-height: 36px;
+    padding-block: 4px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .history-chevron {
+      transition: none;
+    }
   }
   .command-list {
     display: grid;
