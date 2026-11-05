@@ -156,6 +156,17 @@ select:focus {
   outline: none;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
 }
+/* Checkboxes and radios keep their native size; the generic text-input
+   geometry above would stretch them to fill their flex/grid parent. */
+input[type='checkbox'],
+input[type='radio'] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  accent-color: var(--blue);
+}
 input[readonly] {
   color: #5f6a7a;
   background: var(--panel-soft);
