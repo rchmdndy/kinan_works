@@ -1,13 +1,22 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createClient } from 'redis';
 import { connect } from 'mqtt';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../src/index.js';
 import { SimulatedDevice } from '../../simulator/src/index.js';
+import {
+  cleanupTestResources,
+  downTestStack,
+  removeTestDir,
+  testComposeArgs,
+} from '../../scripts/test-stack.js';
 
-const dir = mkdtempSync(join(tmpdir(), 'kinan-integration-'));
+const dir =
+  process.env.KINAN_TEST_DIR ??
+  mkdtempSync(join(tmpdir(), 'kinan-integration-'));
+mkdirSync(join(dir, 'auth'), { mode: 0o700 });
 const redisPort = 16000 + Math.floor(Math.random() * 1000);
 const mqttPort = 17000 + Math.floor(Math.random() * 1000);
 const apiPort = 18000 + Math.floor(Math.random() * 1000);
@@ -44,13 +53,14 @@ const env = {
   MOSQUITTO_PASSWD_BIN: passwdHelper,
   TELEMETRY_MAX_CLOCK_SKEW_MS: '60000',
 };
-const compose = [
-  'compose',
-  '-p',
-  `kinan-test-${process.pid}`,
-  '-f',
-  join(import.meta.dir, '../../docker-compose.test.yml'),
-];
+const project = process.env.KINAN_TEST_PROJECT ?? `kinan-test-${process.pid}`;
+const composeEnv = {
+  ...process.env,
+  TEST_REDIS_PORT: String(redisPort),
+  TEST_MQTT_PORT: String(mqttPort),
+  TEST_AUTH_DIR: join(dir, 'auth'),
+  MQTT_INGEST_PASSWORD: password,
+};
 async function fetchApi(path: string, init: RequestInit = {}) {
   return fetch(`http://127.0.0.1:${apiPort}${path}`, {
     ...init,
@@ -71,19 +81,15 @@ async function sseSnapshot() {
 }
 let server: ReturnType<Awaited<ReturnType<typeof createApp>>['app']['listen']>;
 beforeAll(async () => {
-  const proc = Bun.spawn(['docker', ...compose, 'up', '-d', '--wait'], {
-    env: {
-      ...process.env,
-      TEST_REDIS_PORT: String(redisPort),
-      TEST_MQTT_PORT: String(mqttPort),
-      TEST_AUTH_DIR: join(dir, 'auth'),
-      MQTT_INGEST_PASSWORD: password,
-    },
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  if ((await proc.exited) !== 0)
-    throw new Error(await new Response(proc.stderr).text());
+  const proc = Bun.spawn(
+    testComposeArgs(project, ['up', '-d', '--wait', '--wait-timeout', '30']),
+    { env: composeEnv, stdout: 'ignore', stderr: 'pipe' },
+  );
+  const [code, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stderr).text(),
+  ]);
+  if (code !== 0) throw new Error(stderr);
   await Bun.spawn(
     [
       'docker',
@@ -104,24 +110,22 @@ beforeAll(async () => {
   await redis.connect();
 });
 afterAll(async () => {
-  server?.stop(true);
-  await redis?.quit();
-  await service?.close();
-  const cleanup = Bun.spawn(['docker', ...compose, 'down', '-v'], {
-    env: {
-      ...process.env,
-      TEST_REDIS_PORT: String(redisPort),
-      TEST_MQTT_PORT: String(mqttPort),
-      TEST_AUTH_DIR: join(dir, 'auth'),
-      MQTT_INGEST_PASSWORD: password,
-    },
-    stdout: 'ignore',
-    stderr: 'pipe',
-  });
-  if ((await cleanup.exited) !== 0)
-    throw new Error(await new Response(cleanup.stderr).text());
-  rmSync(dir, { recursive: true, force: true });
-});
+  try {
+    await cleanupTestResources([
+      { label: 'HTTP shutdown', run: () => server?.stop(true) },
+      {
+        label: 'Redis shutdown',
+        run: () => {
+          if (redis?.isOpen) redis.destroy();
+        },
+      },
+      { label: 'Application shutdown', run: () => service?.close() },
+    ]);
+  } finally {
+    await downTestStack(project, composeEnv);
+    await removeTestDir(dir);
+  }
+}, 45000);
 describe('self-hosted live integration', () => {
   test('authenticates, enforces CSRF, ingests MQTT, streams SSE, and recovers cache', async () => {
     const now = Date.now();

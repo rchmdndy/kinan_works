@@ -101,6 +101,26 @@ docker compose up -d --build api web
 
 Then reload the browser (hard refresh if needed). Check that the browser URL targets this stack, not another project or proxy. `docker compose pull` alone cannot incorporate local edits.
 
+## Docker test lifecycle and disk usage
+
+Use `bun run test`, including for targeted integration runs:
+
+```sh
+bun run test -- api/tests/integration.test.ts
+```
+
+The supervisor creates a unique `kinan-test-*` project so parallel tests remain isolated. It removes that project's containers, orphans, network and anonymous volumes after success, failure, child-process crash, a three-minute suite timeout, or SIGINT/SIGTERM. Application shutdown is bounded and cannot skip Docker teardown. The CI step allows five minutes so timeout cleanup can finish. Direct `bun test` still has integration teardown, but bypasses the supervisor's fallback. SIGKILL of the supervisor, a host crash, or an unavailable Docker daemon cannot guarantee cleanup; failures are reported rather than pruning other projects.
+
+Repeated local builds reuse the same `kinan_works` project and image tags. Keep the same checkout directory and Compose project name; do not create a new `-p` name for every UI test. To stop the local stack and remove its generated app images while retaining persistent data:
+
+```sh
+docker compose down --remove-orphans --rmi local
+```
+
+Do not add `--volumes` to this local-stack command: its broker data must survive. Integration and benchmark volumes are disposable; application data is not. Inspect older leftovers in Portainer or with `docker ps -a` and `docker system df` before manually removing an exact project. Do not delete resources merely because their names start with `kinan`, and do not run `docker system prune -a --volumes` as part of testing or deployment.
+
+Docker build cache and shared base images remain reusable and are not owned by a single test project. They are not automatically pruned. VPS release images also remain available for rollback; the test cleanup never touches the local application or VPS project.
+
 ## VPS deployment from GHCR (no source build)
 
 Use Docker Engine with the Compose v2 plugin on a Linux **amd64** VPS. CI currently builds the runner's amd64 platform only. The standalone `docker-compose.vps.yml` consumes these images with one shared `IMAGE_TAG=sha-<full 40-character commit SHA>`:

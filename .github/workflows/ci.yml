@@ -19,7 +19,7 @@ jobs:
       - run: bun run typecheck
       - run: bun run build
       - run: bun run test
-        timeout-minutes: 3
+        timeout-minutes: 5
       - name: Test deployment command boundary
         run: python3 scripts/deploy/test_deploy.py
   container-build:
