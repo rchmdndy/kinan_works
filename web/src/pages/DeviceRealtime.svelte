@@ -138,7 +138,6 @@
   </div>
 </header>
 <DeviceTabs deviceId={device.id} page="realtime" />
-<DeviceControls {device} />
 <section id="realtime-summary" class="summary-bar">
   <div>
     <span class:offline={unavailable()} class="live-dot"></span><span
@@ -201,4 +200,5 @@
   </fieldset>
   <div class="chart"><canvas bind:this={canvas}></canvas></div>
 </section>
+<DeviceControls {device} />
 {#if message}<p class="toast error" role="alert">{message}</p>{/if}
