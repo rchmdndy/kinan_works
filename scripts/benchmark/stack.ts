@@ -167,6 +167,48 @@ export async function containers(s: State) {
   }
   return rows;
 }
+export async function downStack(
+  s: State,
+  runCompose = compose,
+  runCommand = command,
+  unitExists = existsSync,
+) {
+  await runCompose(s, [
+    'down',
+    '--volumes',
+    '--remove-orphans',
+    '--rmi',
+    'local',
+    '--timeout',
+    '15',
+  ]);
+  const unit = `/run/systemd/system/${s.slice}`;
+  if (unitExists(unit)) {
+    await runCommand(['sudo', '-n', 'systemctl', 'stop', s.slice]);
+    await runCommand(['sudo', '-n', 'rm', '-f', unit]);
+    await runCommand(['sudo', '-n', 'systemctl', 'daemon-reload']);
+  }
+}
+
+export async function cleanupFailedSetup(
+  setup: () => Promise<void>,
+  cleanup: () => Promise<void>,
+) {
+  try {
+    await setup();
+  } catch (error) {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Benchmark setup and cleanup failed',
+      );
+    }
+    throw error;
+  }
+}
+
 if (import.meta.main) {
   const [action, path] = process.argv.slice(2);
   if (action === 'init') {
@@ -209,27 +251,32 @@ if (import.meta.main) {
         throw new Error('Slice already exists; use check or down, not up');
       const text = `[Unit]\nDescription=Isolated Grow Sense benchmark ${s.project}\n[Slice]\nCPUAccounting=yes\nMemoryAccounting=yes\nIOAccounting=yes\nCPUQuota=100%\nMemoryMax=1536M\nMemorySwapMax=0\n`;
       writeFileSync(`${s.dir}/slice.unit`, text, { mode: 0o600 });
-      await command([
-        'sudo',
-        '-n',
-        'install',
-        '-m',
-        '644',
-        `${s.dir}/slice.unit`,
-        unit,
-      ]);
-      await command(['sudo', '-n', 'systemctl', 'daemon-reload']);
-      await command(['sudo', '-n', 'systemctl', 'start', s.slice]);
-      assertCap(s);
-      await compose(s, [
-        'up',
-        '-d',
-        '--build',
-        '--wait',
-        '--wait-timeout',
-        '120',
-      ]);
-      await containers(s);
+      await cleanupFailedSetup(
+        async () => {
+          await command([
+            'sudo',
+            '-n',
+            'install',
+            '-m',
+            '644',
+            `${s.dir}/slice.unit`,
+            unit,
+          ]);
+          await command(['sudo', '-n', 'systemctl', 'daemon-reload']);
+          await command(['sudo', '-n', 'systemctl', 'start', s.slice]);
+          assertCap(s);
+          await compose(s, [
+            'up',
+            '-d',
+            '--build',
+            '--wait',
+            '--wait-timeout',
+            '120',
+          ]);
+          await containers(s);
+        },
+        () => downStack(s),
+      );
       console.log('Isolated stack ready. Full workload has not run.');
     } else if (action === 'check') {
       await preflight();
@@ -239,18 +286,9 @@ if (import.meta.main) {
         'All four server containers are inside the verified aggregate cap; generator is outside.',
       );
     } else if (action === 'down') {
-      await compose(s, ['down', '--volumes', '--timeout', '15']);
-      await command(['sudo', '-n', 'systemctl', 'stop', s.slice]);
-      await command([
-        'sudo',
-        '-n',
-        'rm',
-        '-f',
-        `/run/systemd/system/${s.slice}`,
-      ]);
-      await command(['sudo', '-n', 'systemctl', 'daemon-reload']);
+      await downStack(s);
       console.log(
-        `Removed only ${s.project} containers/network/volume/slice. Retained credentials, SQLite and results in ${s.dir}`,
+        `Removed only ${s.project} containers/network/volume/local image/slice. Retained credentials, SQLite and results in ${s.dir}`,
       );
     } else throw new Error('Unknown action');
   }

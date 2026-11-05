@@ -1,5 +1,82 @@
 import { expect, test } from 'bun:test';
-import { bootstrapScript } from './stack';
+import {
+  bootstrapScript,
+  cleanupFailedSetup,
+  downStack,
+  type State,
+} from './stack';
+
+test('benchmark teardown removes project-built images and tolerates missing rebooted slice', async () => {
+  const s = {
+    project: 'kinanbench123456abcdef',
+    slice: 'kinanbench123456abcdef.slice',
+  } as State;
+  for (const exists of [true, false]) {
+    const calls: string[][] = [];
+    await downStack(
+      s,
+      async (state, args) => {
+        expect(state).toBe(s);
+        calls.push(args);
+        return '';
+      },
+      async (args) => {
+        calls.push(args);
+        return '';
+      },
+      () => exists,
+    );
+    expect(calls[0]).toEqual([
+      'down',
+      '--volumes',
+      '--remove-orphans',
+      '--rmi',
+      'local',
+      '--timeout',
+      '15',
+    ]);
+    expect(calls).toHaveLength(exists ? 4 : 1);
+    expect(calls.flat()).not.toContain('prune');
+  }
+});
+
+test('failed benchmark setup cleans partial resources and preserves both failures', async () => {
+  const failure = new Error('port conflict');
+  let cleaned = 0;
+  await expect(
+    cleanupFailedSetup(
+      async () => {
+        throw failure;
+      },
+      async () => {
+        cleaned++;
+      },
+    ),
+  ).rejects.toBe(failure);
+  expect(cleaned).toBe(1);
+  await cleanupFailedSetup(
+    async () => {},
+    async () => {
+      cleaned++;
+    },
+  );
+  expect(cleaned).toBe(1);
+  const cleanupFailure = new Error('docker unavailable');
+  try {
+    await cleanupFailedSetup(
+      async () => {
+        throw failure;
+      },
+      async () => {
+        throw cleanupFailure;
+      },
+    );
+    throw new Error('Expected cleanup failure');
+  } catch (error) {
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual([failure, cleanupFailure]);
+  }
+});
 
 test('bootstrap retries only an empty database with the matching operator', async () => {
   const password_hash = await Bun.password.hash('test-password');
