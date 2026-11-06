@@ -1108,6 +1108,7 @@ fieldset {
 .export-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
   gap: 12px;
 }
 .option-grid {

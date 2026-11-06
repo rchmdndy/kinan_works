@@ -4,16 +4,17 @@
   import type { Device } from '../lib/types';
   import type { ExportJob, ExportRecord } from '../lib/export-jobs';
   import { formatExportError } from '../lib/export-error';
+  import DateTimeField from '../components/DateTimeField.svelte';
+  import { toParts, validateRange } from '../lib/export-range';
 
-  const toLocalDateTime = (timestamp: number) =>
-    new Date(timestamp - new Date(timestamp).getTimezoneOffset() * 60_000)
-      .toISOString()
-      .slice(0, 16);
   let { devices }: { devices: Device[] } = $props();
   let deviceId = $state('');
   let parameterIds = $state<string[]>([]);
-  let startDate = $state(toLocalDateTime(Date.now() - 24 * 60 * 60 * 1000));
-  let endDate = $state(toLocalDateTime(Date.now()));
+  let start = $state(toParts(Date.now() - 24 * 60 * 60 * 1000));
+  let end = $state(toParts(Date.now()));
+  let now = $state(Date.now());
+  const range = $derived(validateRange(start, end, now));
+  const today = $derived(toParts(now).date);
   let busy = $state(false);
   let message = $state('');
   let notice = $state('');
@@ -43,6 +44,10 @@
   $effect(() => {
     void refreshExports();
   });
+  $effect(() => {
+    const timer = setInterval(() => (now = Date.now()), 30_000);
+    return () => clearInterval(timer);
+  });
   function changeDevice(id: string) {
     deviceId = id;
     parameterIds = Object.values(
@@ -70,14 +75,10 @@
       message = 'Pilih perangkat dan minimal satu parameter.';
       return;
     }
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    if (
-      Number.isNaN(start.valueOf()) ||
-      Number.isNaN(end.valueOf()) ||
-      end <= start
-    ) {
-      message = 'Rentang waktu tidak valid.';
+    now = Date.now();
+    const { start: startMs, end: endMs, errors } = range;
+    if (errors.start || errors.end || startMs === null || endMs === null) {
+      message = 'Periksa kembali rentang waktu di bawah.';
       return;
     }
     busy = true;
@@ -89,8 +90,8 @@
         body: JSON.stringify({
           deviceId: selected.id,
           parameterIds,
-          start: start.getTime(),
-          end: end.getTime(),
+          start: startMs,
+          end: endMs,
         }),
       });
       activeJobId = result.job.id;
@@ -199,21 +200,19 @@
                 </Select.Content>
               </Select.Portal>
             </Select.Root></label
-          ><label
-            >Mulai<input
-              type="datetime-local"
-              bind:value={startDate}
-              required
-              disabled={busy}
-            /></label
-          ><label
-            >Akhir (eksklusif)<input
-              type="datetime-local"
-              bind:value={endDate}
-              required
-              disabled={busy}
-            /></label
-          >
+          ><DateTimeField
+            label="Mulai"
+            bind:value={start}
+            error={range.errors.start}
+            max={today}
+            disabled={busy}
+          /><DateTimeField
+            label="Akhir (eksklusif)"
+            bind:value={end}
+            error={range.errors.end}
+            min={start.date}
+            disabled={busy}
+          />
         </div>
       </section>
       {#if device()}
