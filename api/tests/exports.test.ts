@@ -29,7 +29,10 @@ type FakeJob = {
   fileBytes: number | null;
 };
 
-const jobs = new Map<string, { job: FakeJob; userId: string }>();
+const jobs = new Map<
+  string,
+  { job: FakeJob; userId: string; deviceId: string }
+>();
 const created: Array<Record<string, unknown>> = [];
 
 const exporter = Bun.serve({
@@ -57,7 +60,11 @@ const exporter = Bun.serve({
         error: null,
         fileBytes: null,
       };
-      jobs.set(job.id, { job, userId: body.userId as string });
+      jobs.set(job.id, {
+        job,
+        userId: body.userId as string,
+        deviceId: body.deviceId as string,
+      });
       return Response.json({ job });
     }
     const single = /^\/internal\/exports\/([^/]+)$/.exec(path);
@@ -90,8 +97,9 @@ const exporter = Bun.serve({
         .filter(([, entry]) => entry.userId === list)
         .map(([id, entry]) => ({
           id,
-          deviceId: 'device_1',
-          deviceLabel: 'Device',
+          deviceId: entry.deviceId,
+          // The real exporter stores jobs without a label.
+          deviceLabel: '',
           parameterIds: ['parameter_1'],
           start: 0,
           end: 100,
@@ -280,9 +288,12 @@ describe('export proxy routes', () => {
         }),
       );
       const listBody = (await list.json()) as {
-        exports: Array<{ id: string }>;
+        exports: Array<{ id: string; deviceLabel: string }>;
       };
       expect(listBody.exports.map((item) => item.id)).toContain(job.job.id);
+      expect(listBody.exports.map((item) => item.deviceLabel)).toEqual([
+        'Test device',
+      ]);
 
       // Download proxies the file bytes.
       jobs.get(job.job.id)!.job.status = 'ready';

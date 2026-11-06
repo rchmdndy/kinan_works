@@ -78,7 +78,16 @@ export function createExportRoutes(dependencies: AppDependencies) {
       if (!response.ok)
         return error(set, 502, 'Layanan ekspor tidak tersedia.');
       const body = (await response.json()) as { exports: ExportSummary[] };
-      return { exports: body.exports };
+      // The exporter stores no device label; resolve it from the owner's devices.
+      return {
+        exports: body.exports.map((item) => ({
+          ...item,
+          deviceLabel:
+            item.deviceLabel ||
+            repository.getDevice(item.deviceId)?.label ||
+            item.deviceId,
+        })),
+      };
     })
     .post('/', async ({ request, body, set }) => {
       const session = authenticate(request, repository);
