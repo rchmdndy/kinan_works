@@ -123,10 +123,18 @@
           await refreshExports();
           return;
         }
-      } catch {
+      } catch (error) {
+        activeJobId = '';
+        message =
+          error instanceof Error
+            ? `Gagal memantau status ekspor: ${error.message}. Muat ulang riwayat untuk melihat hasilnya.`
+            : 'Gagal memantau status ekspor.';
         return;
       }
     }
+    activeJobId = '';
+    notice =
+      'Ekspor masih berjalan. Muat ulang riwayat untuk melihat hasilnya.';
   }
   function downloadExport(id: string) {
     window.location.href = `/api/exports/${encodeURIComponent(id)}/file`;
