@@ -1,5 +1,5 @@
 import { Database as SqliteDatabase } from 'bun:sqlite';
-import { and, asc, desc, eq, gte, gt, lt, lte, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, gt, lt, lte, sql } from 'drizzle-orm';
 import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import {
   chmodSync,
@@ -506,6 +506,22 @@ export class Repository {
       .all()
       .reverse()
       .map(rowToPacket);
+  }
+  countTelemetryBefore(cutoff: number, deviceId?: string): number {
+    return (
+      this.db
+        .select({ total: count() })
+        .from(schema.telemetry)
+        .where(
+          deviceId
+            ? and(
+                eq(schema.telemetry.deviceId, deviceId),
+                lt(schema.telemetry.timestamp, cutoff),
+              )
+            : lt(schema.telemetry.timestamp, cutoff),
+        )
+        .get()?.total ?? 0
+    );
   }
   pruneTelemetry(cutoff: number, deviceId?: string): number {
     return this.db.transaction(

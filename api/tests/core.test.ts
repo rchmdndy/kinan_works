@@ -86,6 +86,26 @@ describe('security and SQLite primitives', () => {
     expect(repo.getLatest('mine')).toEqual(packet);
     db.close();
   });
+  test('countTelemetryBefore counts without loading rows and honours device scope', () => {
+    const db = memoryDatabase();
+    const repo = new Repository(db);
+    repo.saveDeviceBundle(device('one'), secret);
+    repo.saveDeviceBundle(device('two'), secret);
+    const packet = (timestamp: number, writeId: string) => ({
+      timestamp,
+      writeId,
+      credentialVersion: 1,
+      values: { temperature: { status: 'ok' as const, value: 1 } },
+    });
+    repo.saveTelemetry('one', packet(10, 'a'));
+    repo.saveTelemetry('one', packet(20, 'b'));
+    repo.saveTelemetry('two', packet(5, 'c'));
+    expect(repo.countTelemetryBefore(20)).toBe(2);
+    expect(repo.countTelemetryBefore(20, 'one')).toBe(1);
+    expect(repo.countTelemetryBefore(1_000)).toBe(3);
+    expect(repo.pruneTelemetry(20, 'one')).toBe(1);
+    db.close();
+  });
   test('legacy import is idempotent and rejects conflicts', () => {
     const db = memoryDatabase();
     const input = importInput([device('one'), device('two')]);

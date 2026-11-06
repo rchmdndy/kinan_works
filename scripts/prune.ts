@@ -15,7 +15,7 @@ try {
     (sum, id) =>
       sum +
       (dryRun
-        ? repository.getHistory(id, 0, cutoff, 10_000_000).length
+        ? repository.countTelemetryBefore(cutoff, id)
         : repository.pruneTelemetry(cutoff, id)),
     0,
   );
