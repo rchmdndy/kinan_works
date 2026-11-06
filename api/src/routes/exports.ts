@@ -120,8 +120,18 @@ export function createExportRoutes(dependencies: AppDependencies) {
           end: input.data.end,
         }),
       });
-      if (upstream.status === 429)
-        return error(set, 429, 'Terlalu banyak pekerjaan ekspor aktif.');
+      if (upstream.status === 429) {
+        const limit = (await upstream.json().catch(() => ({}))) as {
+          code?: string;
+        };
+        return error(
+          set,
+          429,
+          limit.code === 'daily_limit'
+            ? 'Batas ekspor harian tercapai. Coba lagi besok.'
+            : 'Terlalu banyak pekerjaan ekspor aktif.',
+        );
+      }
       if (!upstream.ok)
         return error(set, 502, 'Layanan ekspor tidak tersedia.');
       const created = (await upstream.json()) as { job: ExportJobStatus };

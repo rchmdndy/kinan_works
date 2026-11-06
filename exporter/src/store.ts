@@ -180,6 +180,15 @@ export class ExportStore {
       );
   }
 
+  countCreatedSince(userId: string, since: number): number {
+    const row = this.db
+      .query(
+        'SELECT count(*) AS total FROM exports WHERE user_id = ? AND created_at >= ?',
+      )
+      .get(userId, since) as { total: number };
+    return row.total;
+  }
+
   staleProcessingJobs(olderThanMs: number): ExportJobRecord[] {
     const cutoff = Date.now() - olderThanMs;
     const rows = this.db

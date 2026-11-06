@@ -155,6 +155,38 @@ describe('exporter internal service', () => {
     expect(third.status).toBe(429);
   });
 
+  test('enforces the daily limit separately from the active limit', async () => {
+    const limited = createExporterRoutes(store, {
+      ...config,
+      EXPORTER_MAX_ACTIVE_PER_USER: 10,
+      EXPORTER_MAX_TOTAL_PER_USER_PER_DAY: 1,
+    });
+    const post = (userId: string) =>
+      limited.handle(
+        new Request('http://localhost/internal/exports/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            deviceId: 'device_1',
+            parameterIds: ['p1'],
+            start: 0,
+            end: 2_000_000,
+          }),
+        }),
+      );
+    const first = await post('user_daily');
+    expect(first.status).toBe(200);
+    const { job } = (await first.json()) as { job: { id: string } };
+    store.update(job.id, { status: 'ready', finishedAt: Date.now() });
+    const second = await post('user_daily');
+    expect(second.status).toBe(429);
+    expect(((await second.json()) as { code: string }).code).toBe(
+      'daily_limit',
+    );
+    expect((await post('user_other_daily')).status).toBe(200);
+  });
+
   test('lists jobs per user only', async () => {
     const mine = await call('GET', '/internal/exports/?userId=user_1&limit=10');
     expect(mine.status).toBe(200);

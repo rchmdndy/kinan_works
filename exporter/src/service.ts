@@ -10,6 +10,8 @@ import {
   type ExportJobRecord,
 } from './types';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export function createExporterRoutes(
   store: ExportStore,
   config: ExporterConfig,
@@ -45,7 +47,12 @@ export function createExporterRoutes(
         ).length;
       if (active >= config.EXPORTER_MAX_ACTIVE_PER_USER) {
         set.status = 429;
-        return { error: 'Too many active export jobs' };
+        return { error: 'Too many active export jobs', code: 'active_limit' };
+      }
+      const today = store.countCreatedSince(input.userId, Date.now() - DAY_MS);
+      if (today >= config.EXPORTER_MAX_TOTAL_PER_USER_PER_DAY) {
+        set.status = 429;
+        return { error: 'Daily export limit reached', code: 'daily_limit' };
       }
       const record = store.createJob(
         {
