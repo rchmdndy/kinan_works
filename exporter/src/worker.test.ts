@@ -240,6 +240,18 @@ describe('export worker', () => {
     worker = new ExportWorker(store, config);
   });
 
+  test('fails jobs left processing by a crashed run so they stop blocking new exports', () => {
+    const stuck = makeJob();
+    store.update(stuck.id, { status: 'processing', startedAt: 1 });
+    const queued = makeJob();
+    expect(worker.recoverInterruptedJobs()).toBeGreaterThanOrEqual(1);
+    const recovered = store.getJob(stuck.id)!;
+    expect(recovered.status).toBe('failed');
+    expect(recovered.error).toMatch(/dimulai ulang/);
+    expect(recovered.finishedAt).not.toBeNull();
+    expect(store.getJob(queued.id)!.status).toBe('queued');
+  });
+
   test('exports all rows across keyset pages in chronological order', async () => {
     const job = makeJob();
     const result = await worker.runExport(job);

@@ -65,7 +65,21 @@ export class ExportWorker {
   }
 
   start(): void {
+    this.recoverInterruptedJobs();
     void this.loop();
+  }
+
+  // This is the only worker process, so any job still 'processing' at startup
+  // was interrupted by a crash or redeploy and will never finish on its own.
+  recoverInterruptedJobs(): number {
+    const interrupted = this.store.staleProcessingJobs(0);
+    for (const job of interrupted)
+      this.store.update(job.id, {
+        status: 'failed',
+        error: 'Ekspor terhenti karena layanan dimulai ulang. Coba lagi.',
+        finishedAt: Date.now(),
+      });
+    return interrupted.length;
   }
 
   async stop(): Promise<void> {
