@@ -11,6 +11,8 @@ RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
 
 FROM dependencies AS build
 COPY web web
+# Runtime constant shared with the API login schema (other api imports are type-only).
+COPY api/src/password-policy.ts api/src/password-policy.ts
 RUN bun run --cwd web build
 
 FROM nginx:1.28.0-alpine AS runtime
