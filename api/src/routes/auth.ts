@@ -9,10 +9,14 @@ import {
 } from '../auth.js';
 import type { AppDependencies } from '../app.js';
 import { clientAddress, RateLimiter } from '../rate-limit.js';
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+} from '../password-policy.js';
 
 const loginSchema = z.object({
   username: z.string().trim().min(3).max(64),
-  password: z.string().min(8).max(256),
+  password: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
 });
 
 function error(

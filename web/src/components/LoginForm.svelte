@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { PASSWORD_MIN_LENGTH } from '../../../api/src/password-policy';
   let {
     busy = false,
     message = '',
@@ -39,7 +40,7 @@
           type="password"
           bind:value={password}
           required
-          minlength="6"
+          minlength={PASSWORD_MIN_LENGTH}
           autocomplete="current-password"
           disabled={busy}
         /></label
