@@ -8,6 +8,8 @@ export type ExportJobRecord = {
   parameterIds: string[];
   start: number;
   end: number;
+  /** 0 = every raw reading; otherwise one row per interval (first reading). */
+  intervalMs: number;
   status: ExportStatus;
   rowCount: number | null;
   error: string | null;
@@ -24,6 +26,7 @@ export type CreateExportJob = {
   parameterIds: string[];
   start: number;
   end: number;
+  intervalMs?: number;
 };
 
 export type ExportSummary = {
@@ -41,6 +44,7 @@ export type ExportSummary = {
   finishedAt: number | null;
 };
 
+export const EXPORT_INTERVALS_MS: readonly number[] = [0, 60_000];
 export const EXPORT_MAX_PARAMETERS = 100;
 export const EXPORT_MAX_TIME_SPAN_MS = 366 * 24 * 60 * 60 * 1000;
 export const EXPORT_MAX_ROW_COUNT = 1_000_000;

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS exports (
   parameter_ids_json TEXT NOT NULL,
   start_ts INTEGER NOT NULL,
   end_ts INTEGER NOT NULL,
+  interval_ms INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL CHECK (status IN ('queued', 'processing', 'ready', 'failed')),
   row_count INTEGER,
   error TEXT,
@@ -34,6 +35,7 @@ function rowToRecord(row: ExportRow): ExportJobRecord {
     parameterIds: JSON.parse(row.parameter_ids_json) as string[],
     start: row.start_ts,
     end: row.end_ts,
+    intervalMs: row.interval_ms,
     status: row.status as ExportJobRecord['status'],
     rowCount: row.row_count,
     error: row.error,
@@ -53,6 +55,7 @@ type ExportRow = {
   parameter_ids_json: string;
   start_ts: number;
   end_ts: number;
+  interval_ms: number;
   status: string;
   row_count: number | null;
   error: string | null;
@@ -70,6 +73,13 @@ export class ExportStore {
     this.db = new SqliteDatabase(databasePath, { create: true, strict: true });
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
     this.db.exec(SCHEMA);
+    const columns = this.db.query('PRAGMA table_info(exports)').all() as {
+      name: string;
+    }[];
+    if (!columns.some((column) => column.name === 'interval_ms'))
+      this.db.exec(
+        'ALTER TABLE exports ADD COLUMN interval_ms INTEGER NOT NULL DEFAULT 0',
+      );
     if (databasePath !== ':memory:') chmodSync(databasePath, 0o600);
   }
 
@@ -82,6 +92,7 @@ export class ExportStore {
       parameterIds: input.parameterIds,
       start: input.start,
       end: input.end,
+      intervalMs: input.intervalMs ?? 0,
       status: 'queued',
       rowCount: null,
       error: null,
@@ -98,8 +109,8 @@ export class ExportStore {
   insert(record: ExportJobRecord): void {
     this.db
       .query(
-        `INSERT INTO exports (id, user_id, device_id, device_label, parameter_ids_json, start_ts, end_ts, status, row_count, error, file_path, file_bytes, created_at, started_at, finished_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO exports (id, user_id, device_id, device_label, parameter_ids_json, start_ts, end_ts, interval_ms, status, row_count, error, file_path, file_bytes, created_at, started_at, finished_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         record.id,
@@ -109,6 +120,7 @@ export class ExportStore {
         JSON.stringify(record.parameterIds),
         record.start,
         record.end,
+        record.intervalMs,
         record.status,
         record.rowCount,
         record.error,

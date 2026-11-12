@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { ExporterConfig } from './config';
 import { ExportStore } from './store';
 import {
+  EXPORT_INTERVALS_MS,
   EXPORT_MAX_PARAMETERS,
   EXPORT_MAX_TIME_SPAN_MS,
   type CreateExportJob,
@@ -35,6 +36,8 @@ export function createExporterRoutes(
         !Number.isFinite(input.start) ||
         !Number.isFinite(input.end) ||
         input.end <= input.start ||
+        (input.intervalMs !== undefined &&
+          !EXPORT_INTERVALS_MS.includes(input.intervalMs)) ||
         input.end - input.start > EXPORT_MAX_TIME_SPAN_MS
       ) {
         set.status = 400;
@@ -61,6 +64,7 @@ export function createExporterRoutes(
           parameterIds: input.parameterIds as string[],
           start: Math.trunc(input.start),
           end: Math.trunc(input.end),
+          intervalMs: input.intervalMs ?? 0,
         },
         '',
       );

@@ -11,6 +11,7 @@
   let { devices }: { devices: Device[] } = $props();
   let deviceId = $state('');
   let parameterIds = $state<string[]>([]);
+  let perMinute = $state(false);
   let start = $state(toParts(Date.now() - 24 * 60 * 60 * 1000));
   let end = $state(toParts(Date.now()));
   let now = $state(Date.now());
@@ -99,6 +100,7 @@
           parameterIds,
           start: startMs,
           end: endMs,
+          intervalMs: perMinute ? 60_000 : 0,
         }),
       });
       activeJobId = result.job.id;
@@ -240,6 +242,39 @@
             disabled={busy}
           />
         </div>
+        <label class="option-label">
+          <Checkbox.Root
+            class="checkbox-root"
+            checked={perMinute}
+            onCheckedChange={(value) => (perMinute = value === true)}
+            disabled={busy}
+          >
+            {#snippet children({ checked })}
+              {#if checked}
+                <svg
+                  class="checkbox-indicator"
+                  viewBox="0 0 12 12"
+                  aria-hidden="true"
+                  ><path
+                    d="M2 6l2.5 2.5L10 3"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  ></path></svg
+                >
+              {/if}
+            {/snippet}
+          </Checkbox.Root>
+          <span>
+            <strong>Satu baris per menit</strong>
+            <small
+              >Nilai pembacaan pertama tiap menit, apa adanya. Menit tanpa data
+              dibiarkan kosong.</small
+            >
+          </span>
+        </label>
       </section>
       {#if device()}
         <section>

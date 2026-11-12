@@ -10,6 +10,7 @@ const createExportSchema = z
     parameterIds: z.array(z.string().min(1).max(64)).min(1).max(100),
     start: z.number().int().nonnegative(),
     end: z.number().int().positive(),
+    intervalMs: z.union([z.literal(0), z.literal(60_000)]).default(0),
   })
   .refine((value) => value.end > value.start, 'Invalid export range');
 
@@ -128,6 +129,7 @@ export function createExportRoutes(dependencies: AppDependencies) {
           parameterIds: available,
           start: input.data.start,
           end: input.data.end,
+          intervalMs: input.data.intervalMs,
         }),
       });
       if (upstream.status === 429) {

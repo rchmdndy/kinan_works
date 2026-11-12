@@ -543,4 +543,54 @@ describe('export worker', () => {
     });
     store.close();
   });
+  test('per-minute export keeps the first reading unmodified and one row per minute', async () => {
+    seedTelemetry(0);
+    const db = new SqliteDatabase(telemetryPath);
+    const minute = 6_000_000;
+    [
+      [minute + 5_000, 1],
+      [minute + 15_000, 2],
+      [minute + 2 * 60_000 + 30_000, 7],
+      [minute + 2 * 60_000 + 59_000, 8],
+    ].forEach(([timestamp, value], i) =>
+      db
+        .query(
+          'INSERT INTO telemetry (device_id, write_id, timestamp, credential_version, values_json, received_at) VALUES (?, ?, ?, 1, ?, ?)',
+        )
+        .run(
+          deviceId,
+          `minute-${i}`,
+          timestamp!,
+          JSON.stringify({ p1: { status: 'ok', value } }),
+          timestamp!,
+        ),
+    );
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    db.close();
+    const minuteStore = new ExportStore(`${tmp}/store3.sqlite`);
+    const minuteWorker = new ExportWorker(minuteStore, config);
+    const job = minuteStore.createJob(
+      {
+        userId: 'user_1',
+        deviceId,
+        parameterIds: ['p1'],
+        start: minute,
+        end: minute + 3 * 60_000,
+        intervalMs: 60_000,
+      },
+      'Demo device',
+    );
+    const result = await minuteWorker.runExport(job);
+    minuteStore.close();
+    expect(result.rowCount).toBe(3);
+    const workbook = XLSX.readFile(join(filesDir, result.filePath));
+    const sheet = XLSX.utils.sheet_to_json<Record<string, string | number>>(
+      workbook.Sheets['Data']!,
+      { raw: true },
+    );
+    expect(sheet.map((row) => row['Suhu (C)'] ?? '')).toEqual([1, '', 7]);
+    const times = sheet.map((row) => Object.values(row)[0] as number);
+    expect(times[1]! - times[0]!).toBeCloseTo(1 / 1440, 8);
+    expect(times[2]! - times[1]!).toBeCloseTo(1 / 1440, 8);
+  });
 });
