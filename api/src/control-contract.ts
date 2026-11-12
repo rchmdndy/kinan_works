@@ -69,3 +69,5 @@ export function acceptsValue(
 }
 export const CONTROL_FRESH_MS = 45_000;
 export const COMMAND_TTL_MS = 60_000;
+/** Devices stamp results with their own clock, which drifts from ours. */
+export const RESULT_CLOCK_SKEW_MS = 60_000;

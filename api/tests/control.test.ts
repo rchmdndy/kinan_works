@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import type { StoredCommand } from '../src/control-contract.js';
 import { Repository, openDatabase } from '../src/repository.js';
 import { ControlService } from '../src/control.js';
 import type { Parameter } from '../src/types.js';
@@ -223,5 +224,111 @@ test('dashboard definitions reject invented controls and sensor commands', () =>
       value: 29,
     }),
   ).toThrow('already used');
+  repo.close();
+});
+
+test('drifted device clocks and lost results never orphan commands', () => {
+  const repo = new Repository(openDatabase(':memory:'));
+  const id = 'device_skew';
+  repo.saveDeviceBundle(
+    {
+      id,
+      ownerUid: 'owner',
+      label: 'Test',
+      active: true,
+      credentialVersion: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      parameters: { [switchParameter.id]: switchParameter },
+    },
+    { iv: 'test', ciphertext: 'test' },
+  );
+  const service = new ControlService(repo);
+  const model = new SimulatedDevice({
+    deviceId: id,
+    deviceSecret: 'test',
+    credentialVersion: 1,
+    mqttUrl: 'mqtt://localhost',
+    intervalMs: 1000,
+    parameterIds: [],
+    parameters: [switchParameter],
+  });
+  service.publisher = () => {};
+  const ingest = (kind: string, packet: unknown, retained = false) =>
+    service.consume(id, kind, Buffer.from(JSON.stringify(packet)), retained);
+  ingest('state', model.state, true);
+  const availability = {
+    credentialVersion: 1,
+    connectionId: model.state.connectionId,
+    timestamp: Date.now(),
+    online: true,
+  };
+  ingest('availability', availability, true);
+  ingest('availability', availability);
+  const issue = (value: boolean) =>
+    service.issue(id, {
+      commandId: crypto.randomUUID(),
+      parameterId: switchParameter.id,
+      value,
+    });
+  const wire = (command: StoredCommand) => ({
+    commandId: command.commandId,
+    parameterId: command.parameterId,
+    value: command.value,
+    credentialVersion: command.credentialVersion,
+    timestamp: command.timestamp,
+    expiresAt: command.expiresAt,
+    connectionId: command.connectionId,
+    revision: command.revision,
+  });
+  const first = wire(issue(false));
+
+  // A device clock hundreds of milliseconds behind the server used to erase
+  // the result and leave the command unknown.
+  ingest('command-results', {
+    ...model.execute(first)!,
+    timestamp: Date.now() - 500,
+  });
+  expect(repo.getCommand(first.commandId)?.status).toBe('succeeded');
+
+  // A lost result is recovered from the revision the device reports.
+  ingest('state', model.state);
+  const second = issue(true);
+  expect(model.execute(wire(second))?.status).toBe('succeeded');
+  repo.expireCommands(second.expiresAt);
+  expect(repo.getCommand(second.commandId)?.status).toBe('unknown');
+  ingest('state', { ...model.state, timestamp: Date.now() });
+  expect(repo.getCommand(second.commandId)?.status).toBe('succeeded');
+  expect(repo.getCommand(second.commandId)?.reason).toBeUndefined();
+
+  // A result stamped far outside any plausible skew is still refused.
+  const third = issue(false);
+  ingest('command-results', {
+    credentialVersion: 1,
+    connectionId: third.connectionId,
+    timestamp: Date.now() - 10 * 60_000,
+    commandId: third.commandId,
+    status: 'succeeded',
+  });
+  expect(repo.getCommand(third.commandId)?.status).toBe('pending');
+  ingest('command-results', model.execute(wire(third))!);
+  expect(repo.getCommand(third.commandId)?.status).toBe('succeeded');
+
+  // A revision advance on another connection, or at the same revision,
+  // proves nothing about this command.
+  const fourth = issue(true);
+  ingest('state', {
+    ...model.state,
+    connectionId: crypto.randomUUID(),
+    revision: model.state.revision + 9,
+    timestamp: Date.now(),
+  });
+  expect(repo.getCommand(fourth.commandId)?.status).toBe('pending');
+  ingest('state', {
+    ...model.state,
+    revision: fourth.revision,
+    timestamp: Date.now() + 1,
+  });
+  expect(repo.getCommand(fourth.commandId)?.status).toBe('pending');
   repo.close();
 });

@@ -7,7 +7,9 @@ import {
   stateSchema,
   COMMAND_TTL_MS,
   CONTROL_FRESH_MS,
+  RESULT_CLOCK_SKEW_MS,
   type Command,
+  type DeviceState,
   type StoredCommand,
 } from './control-contract.js';
 
@@ -84,8 +86,7 @@ export class ControlService {
           result.credentialVersion !== device.credentialVersion ||
           result.credentialVersion !== command.credentialVersion ||
           result.connectionId !== command.connectionId ||
-          result.timestamp < command.timestamp ||
-          result.timestamp > Date.now() + 5000 ||
+          Math.abs(result.timestamp - Date.now()) > RESULT_CLOCK_SKEW_MS ||
           command.result
         )
           return;
@@ -123,6 +124,7 @@ export class ControlService {
         )
           return;
         this.repository.saveControl(deviceId, 'state', state);
+        this.confirmByRevision(deviceId, state);
         this.notify(deviceId);
       } else if (kind === 'availability') {
         const availability = availabilitySchema.parse(raw);
@@ -161,6 +163,24 @@ export class ControlService {
       }
     } catch {
       /* Invalid device messages never alter control state. */
+    }
+  }
+  /**
+   * The device bumps its revision exactly once per applied command, and a
+   * rejected command leaves it untouched. So an advancing state from the same
+   * connection proves the command ran, even when its result packet was lost.
+   */
+  private confirmByRevision(deviceId: string, state: DeviceState): void {
+    for (const command of this.repository.listCommands(deviceId)) {
+      if (
+        (command.status === 'pending' || command.status === 'unknown') &&
+        command.connectionId === state.connectionId &&
+        command.revision < state.revision
+      ) {
+        const confirmed: StoredCommand = { ...command, status: 'succeeded' };
+        delete confirmed.reason;
+        this.repository.saveCommand(confirmed);
+      }
     }
   }
   issue(deviceId: string, input: unknown): StoredCommand {
