@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { Checkbox, Select } from 'bits-ui';
   import { api } from '../lib/api';
   import type { Device } from '../lib/types';
@@ -21,6 +22,12 @@
   let knownDevices = $state('');
   let exports = $state<ExportRecord[]>([]);
   let activeJobId = $state('');
+  let watchController: AbortController | null = null;
+  let destroyed = false;
+  onDestroy(() => {
+    destroyed = true;
+    watchController?.abort();
+  });
   const device = () => devices.find((item) => item.id === deviceId) || null;
   const deviceOptions = $derived(
     devices.map((item) => ({ value: item.id, label: item.label })),
@@ -97,20 +104,29 @@
       activeJobId = result.job.id;
       notice = 'Permintaan ekspor dibuat. Pekerjaan berjalan di server.';
       await refreshExports();
-      void watchJob(result.job.id);
+      watchController?.abort();
+      watchController = new AbortController();
+      void watchJob(result.job.id, watchController.signal);
     } catch (error) {
       message = error instanceof Error ? error.message : 'Ekspor gagal.';
     } finally {
       busy = false;
     }
   }
-  async function watchJob(jobId: string) {
-    for (let attempt = 0; attempt < 600; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+  async function watchJob(jobId: string, signal: AbortSignal) {
+    const delays = [1000, 2000, 5000];
+    const deadline = Date.now() + 10 * 60 * 1000;
+    for (let attempt = 0; Date.now() < deadline; attempt += 1) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, delays[Math.min(attempt, delays.length - 1)]),
+      );
+      if (destroyed || signal.aborted) return;
       try {
         const result = await api<{ job: ExportJob }>(
           `/api/exports/${encodeURIComponent(jobId)}`,
+          { signal },
         );
+        if (destroyed || signal.aborted) return;
         if (result.job.status === 'ready') {
           activeJobId = '';
           notice = `Ekspor selesai: ${result.job.rowCount ?? 0} baris.`;
@@ -124,6 +140,7 @@
           return;
         }
       } catch (error) {
+        if (destroyed || signal.aborted) return;
         activeJobId = '';
         message =
           error instanceof Error
@@ -132,6 +149,7 @@
         return;
       }
     }
+    if (destroyed) return;
     activeJobId = '';
     notice =
       'Ekspor masih berjalan. Muat ulang riwayat untuk melihat hasilnya.';

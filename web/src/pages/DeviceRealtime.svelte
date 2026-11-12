@@ -17,6 +17,7 @@
   let selectedParameters = $state<string[]>([]);
   let canvas: HTMLCanvasElement;
   let chart: ReturnType<typeof drawChart> | null = null;
+  let frame = 0;
   let unsubscribe: (() => void) | null = null;
   let telemetryState = $state<TelemetryConnectionState>('connecting');
   let message = $state('');
@@ -43,8 +44,17 @@
     }
     updateChart(chart, device, history, selectedParameters);
   }
+  function scheduleRender() {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      renderChart();
+    });
+  }
   function reset() {
     generation += 1;
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
     unsubscribe?.();
     unsubscribe = null;
     chart?.destroy();
@@ -67,18 +77,14 @@
         history = snapshot.last10;
         latest = snapshot.latest ?? history.at(-1) ?? null;
         message = '';
-        setTimeout(() => {
-          if (isCurrent()) renderChart();
-        });
+        scheduleRender();
       },
       telemetry(packet) {
         if (!isCurrent()) return;
         history = mergeTelemetrySamples(history, [packet], 10);
         if (!latest || packet.timestamp >= latest.timestamp) latest = packet;
         message = '';
-        setTimeout(() => {
-          if (isCurrent()) renderChart();
-        });
+        scheduleRender();
       },
       state(next) {
         if (!isCurrent()) return;
@@ -97,9 +103,7 @@
     selectedParameters = selectedParameters.includes(id)
       ? selectedParameters.filter((item) => item !== id)
       : [...selectedParameters, id];
-    chart?.destroy();
-    chart = null;
-    renderChart();
+    if (chart) updateChart(chart, device, history, selectedParameters);
   }
   function readingValue(id: string) {
     const reading = latest?.values[id];

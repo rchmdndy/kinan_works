@@ -1,22 +1,36 @@
-import { Chart, type ChartConfiguration } from 'chart.js/auto';
+import {
+  CategoryScale,
+  Chart,
+  Filler,
+  Legend,
+  LineController,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Tooltip,
+  type ChartConfiguration,
+} from 'chart.js';
 import type { Device, TelemetryPacket } from './types';
 
-function sampleData(samples: TelemetryPacket[], id: string): (number | null)[] {
-  return samples.map((sample) =>
-    sample.values[id]?.status === 'ok' ? sample.values[id].value : null,
-  );
-}
+Chart.register(
+  LineController,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Filler,
+  Tooltip,
+  Legend,
+);
 
-export function drawChart(
-  canvas: HTMLCanvasElement,
+const timestampFormatter = new Intl.DateTimeFormat();
+
+function buildDatasets(
   device: Device,
   samples: TelemetryPacket[],
   parameterIds: string[],
-): Chart {
-  const labels = samples.map((sample) =>
-    new Date(sample.timestamp).toLocaleString(),
-  );
-  const datasets = parameterIds
+) {
+  return parameterIds
     .filter(
       (id) =>
         device.parameters[id] &&
@@ -32,9 +46,28 @@ export function drawChart(
         tension: 0.25,
       };
     });
+}
+
+function sampleData(samples: TelemetryPacket[], id: string): (number | null)[] {
+  return samples.map((sample) =>
+    sample.values[id]?.status === 'ok' ? sample.values[id].value : null,
+  );
+}
+
+export function drawChart(
+  canvas: HTMLCanvasElement,
+  device: Device,
+  samples: TelemetryPacket[],
+  parameterIds: string[],
+): Chart {
   const config: ChartConfiguration<'line'> = {
     type: 'line',
-    data: { labels, datasets },
+    data: {
+      labels: samples.map((sample) =>
+        timestampFormatter.format(sample.timestamp),
+      ),
+      datasets: buildDatasets(device, samples, parameterIds),
+    },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -53,16 +86,8 @@ export function updateChart(
   parameterIds: string[],
 ): void {
   chart.data.labels = samples.map((sample) =>
-    new Date(sample.timestamp).toLocaleString(),
+    timestampFormatter.format(sample.timestamp),
   );
-  const activeIds = parameterIds.filter(
-    (id) =>
-      device.parameters[id] &&
-      (device.parameters[id].type ?? 'nilai') === 'nilai',
-  );
-  chart.data.datasets.forEach((dataset, index) => {
-    const id = activeIds[index];
-    dataset.data = id ? sampleData(samples, id) : [];
-  });
-  chart.update();
+  chart.data.datasets = buildDatasets(device, samples, parameterIds);
+  chart.update('none');
 }

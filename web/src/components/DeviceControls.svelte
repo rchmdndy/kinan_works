@@ -74,25 +74,40 @@
       ),
   );
   $effect(() => {
-    const source = new EventSource(
-      `/api/devices/${encodeURIComponent(device.id)}/control/events`,
-      { withCredentials: true },
-    );
+    const url = `/api/devices/${encodeURIComponent(device.id)}/control/events`;
+    let source: EventSource | null = null;
+    const open = () => {
+      const next = new EventSource(url, { withCredentials: true });
+      next.addEventListener('control', (event) => {
+        try {
+          snapshot = JSON.parse((event as MessageEvent).data);
+          connected = true;
+        } catch {
+          connected = false;
+        }
+      });
+      next.onerror = () => {
+        connected = false;
+      };
+      source = next;
+    };
+    const close = () => {
+      source?.close();
+      source = null;
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') close();
+      else if (!source) open();
+    };
     snapshot = null;
     connected = false;
     unresolved = null;
-    source.addEventListener('control', (event) => {
-      try {
-        snapshot = JSON.parse((event as MessageEvent).data);
-        connected = true;
-      } catch {
-        connected = false;
-      }
-    });
-    source.onerror = () => {
-      connected = false;
+    if (document.visibilityState !== 'hidden') open();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      close();
     };
-    return () => source.close();
   });
   async function send(input: CommandInput) {
     busy = true;

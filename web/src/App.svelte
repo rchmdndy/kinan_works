@@ -5,13 +5,16 @@
   import type { Device } from './lib/types';
   import AppShell from './components/AppShell.svelte';
   import LoginForm from './components/LoginForm.svelte';
-  import Devices from './pages/Devices.svelte';
-  import DeviceCreate from './pages/DeviceCreate.svelte';
-  import DeviceDetail from './pages/DeviceDetail.svelte';
-  import DeviceEdit from './pages/DeviceEdit.svelte';
-  import DeviceRealtime from './pages/DeviceRealtime.svelte';
-  import DeviceCredential from './pages/DeviceCredential.svelte';
-  import Exports from './pages/Exports.svelte';
+
+  const loaders = {
+    devices: () => import('./pages/Devices.svelte'),
+    new: () => import('./pages/DeviceCreate.svelte'),
+    detail: () => import('./pages/DeviceDetail.svelte'),
+    edit: () => import('./pages/DeviceEdit.svelte'),
+    realtime: () => import('./pages/DeviceRealtime.svelte'),
+    credential: () => import('./pages/DeviceCredential.svelte'),
+    exports: () => import('./pages/Exports.svelte'),
+  };
 
   let user: AuthUser | null = null;
   let sessionBusy = true;
@@ -163,24 +166,39 @@
   />
 {:else}
   <AppShell {user} {route} onlogout={() => void logout()}>
-    {#if route.page === 'devices'}<Devices {devices} busy={devicesBusy} />
-    {:else if route.page === 'new'}<DeviceCreate oncreated={createdDevice} />
-    {:else if route.page === 'exports'}<Exports {devices} />
+    {#if route.page === 'devices'}
+      {#await loaders.devices() then page}<page.default
+          {devices}
+          busy={devicesBusy}
+        />{/await}
+    {:else if route.page === 'new'}
+      {#await loaders.new() then page}<page.default
+          oncreated={createdDevice}
+        />{/await}
+    {:else if route.page === 'exports'}
+      {#await loaders.exports() then page}<page.default {devices} />{/await}
     {:else if selectedDevice}
-      {#if route.page === 'detail'}<DeviceDetail
-          device={selectedDevice}
-          secret={secretDeviceId === selectedDevice.id ? revealedSecret : ''}
-          ondevicechange={updateDevice}
-        />
-      {:else if route.page === 'edit'}<DeviceEdit
-          device={selectedDevice}
-          ondevicechange={updateDevice}
-        />
-      {:else if route.page === 'credential'}<DeviceCredential
-          device={selectedDevice}
-          secret={secretDeviceId === selectedDevice.id ? revealedSecret : ''}
-        />
-      {:else}<DeviceRealtime device={selectedDevice} />{/if}
+      {#if route.page === 'detail'}
+        {#await loaders.detail() then page}<page.default
+            device={selectedDevice}
+            secret={secretDeviceId === selectedDevice.id ? revealedSecret : ''}
+            ondevicechange={updateDevice}
+          />{/await}
+      {:else if route.page === 'edit'}
+        {#await loaders.edit() then page}<page.default
+            device={selectedDevice}
+            ondevicechange={updateDevice}
+          />{/await}
+      {:else if route.page === 'credential'}
+        {#await loaders.credential() then page}<page.default
+            device={selectedDevice}
+            secret={secretDeviceId === selectedDevice.id ? revealedSecret : ''}
+          />{/await}
+      {:else}
+        {#await loaders.realtime() then page}<page.default
+            device={selectedDevice}
+          />{/await}
+      {/if}
     {:else}<section class="panel empty">
         <h2>Device tidak ditemukan</h2>
         <p>Perangkat ini tidak tersedia atau sudah dihapus.</p>

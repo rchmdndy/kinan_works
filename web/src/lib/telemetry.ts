@@ -122,24 +122,40 @@ export function connectTelemetryEvents(
   createEventSource: EventSourceFactory = (url, init) =>
     new EventSource(url, init),
 ): () => void {
+  const url = `/api/devices/${encodeURIComponent(deviceId)}/events`;
+  const doc = typeof document === 'undefined' ? null : document;
+  const open = (): EventSourceLike => {
+    const source = createEventSource(url, { withCredentials: true });
+    source.addEventListener('snapshot', (event) => {
+      const snapshot = parseTelemetrySnapshot(event.data);
+      if (snapshot) handlers.snapshot(snapshot);
+      else handlers.malformed?.('snapshot');
+    });
+    source.addEventListener('telemetry', (event) => {
+      const packet = parseTelemetryEvent(event.data);
+      if (packet) handlers.telemetry(packet);
+      else handlers.malformed?.('telemetry');
+    });
+    source.onopen = () => handlers.state('open');
+    source.onerror = () => handlers.state('error');
+    return source;
+  };
   handlers.state('connecting');
-  const source = createEventSource(
-    `/api/devices/${encodeURIComponent(deviceId)}/events`,
-    { withCredentials: true },
-  );
-
-  source.addEventListener('snapshot', (event) => {
-    const snapshot = parseTelemetrySnapshot(event.data);
-    if (snapshot) handlers.snapshot(snapshot);
-    else handlers.malformed?.('snapshot');
-  });
-  source.addEventListener('telemetry', (event) => {
-    const packet = parseTelemetryEvent(event.data);
-    if (packet) handlers.telemetry(packet);
-    else handlers.malformed?.('telemetry');
-  });
-  source.onopen = () => handlers.state('open');
-  source.onerror = () => handlers.state('error');
-
-  return () => source.close();
+  let source: EventSourceLike | null =
+    doc?.visibilityState === 'hidden' ? null : open();
+  const onVisibilityChange = () => {
+    if (doc?.visibilityState === 'hidden') {
+      source?.close();
+      source = null;
+    } else if (!source) {
+      handlers.state('connecting');
+      source = open();
+    }
+  };
+  doc?.addEventListener('visibilitychange', onVisibilityChange);
+  return () => {
+    doc?.removeEventListener('visibilitychange', onVisibilityChange);
+    source?.close();
+    source = null;
+  };
 }
