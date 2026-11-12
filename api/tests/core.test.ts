@@ -86,6 +86,42 @@ describe('security and SQLite primitives', () => {
     expect(repo.getLatest('mine')).toEqual(packet);
     db.close();
   });
+  test('soft delete hides a device and its secret but keeps every stored row', () => {
+    const db = memoryDatabase();
+    const repo = new Repository(db);
+    repo.saveDeviceBundle(device('gone'), secret);
+    repo.saveDeviceBundle(device('kept'), secret);
+    repo.saveTelemetry('gone', {
+      timestamp: 10,
+      writeId: 'write-gone',
+      credentialVersion: 1,
+      values: { temperature: { status: 'ok' as const, value: 20 } },
+    });
+    expect(repo.softDeleteDevice('gone', 123)).toBe(true);
+    expect(repo.softDeleteDevice('gone')).toBe(false);
+    expect(repo.softDeleteDevice('missing')).toBe(false);
+    expect(repo.getDevice('gone')).toBeNull();
+    expect(repo.getEncryptedSecret('gone')).toBeNull();
+    expect(repo.listDevices('owner-a').map((d) => d.id)).toEqual(['kept']);
+    expect(repo.listAllDevices().map((d) => d.id)).toEqual(['kept']);
+    expect(() => repo.saveDeviceBundle(device('gone'), secret)).toThrow();
+    expect(repo.getDeviceLabels(['gone']).get('gone')).toBe(
+      device('gone').label,
+    );
+    const stored = db
+      .query("SELECT active, credential_version FROM devices WHERE id = 'gone'")
+      .get();
+    expect(stored).toEqual({ active: 0, credential_version: 2 });
+    expect(
+      db
+        .query("SELECT count(*) AS n FROM telemetry WHERE device_id = 'gone'")
+        .get(),
+    ).toEqual({ n: 1 });
+    expect(db.query('SELECT deleted_at FROM device_deletions').get()).toEqual({
+      deleted_at: 123,
+    });
+  });
+
   test('countTelemetryBefore counts without loading rows and honours device scope', () => {
     const db = memoryDatabase();
     const repo = new Repository(db);
@@ -158,7 +194,7 @@ describe('security and SQLite primitives', () => {
     repo.saveDeviceBundle(device('legacy-device'), secret);
     expect(repo.getDevice('legacy-device')).toEqual(device('legacy-device'));
     expect(repo.listDevices('owner-a')).toHaveLength(1);
-    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 6 });
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 7 });
     const after = db
       .query(
         "SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY name",

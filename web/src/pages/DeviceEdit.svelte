@@ -16,7 +16,14 @@
   let {
     device,
     ondevicechange,
-  }: { device: Device; ondevicechange: (device: Device) => void } = $props();
+    ondevicedelete,
+  }: {
+    device: Device;
+    ondevicechange: (device: Device) => void;
+    ondevicedelete: (deviceId: string) => void;
+  } = $props();
+  let confirmName = $state('');
+  let deleting = $state(false);
   let label = $state('');
   let parameters = $state<EditableParameter[]>([]);
   let busy = $state(false);
@@ -33,6 +40,7 @@
       }));
       message = '';
       notice = '';
+      confirmName = '';
     }
   });
   function addParameter() {
@@ -90,6 +98,22 @@
       busy = false;
     }
   }
+  async function deleteDevice() {
+    deleting = true;
+    message = '';
+    notice = '';
+    try {
+      await api<{ ok: boolean }>(
+        `/api/devices/${encodeURIComponent(device.id)}`,
+        { method: 'DELETE' },
+      );
+      ondevicedelete(device.id);
+    } catch (error) {
+      message =
+        error instanceof Error ? error.message : 'Gagal menghapus perangkat.';
+      deleting = false;
+    }
+  }
 </script>
 
 <header class="page-header detail-header">
@@ -135,6 +159,32 @@
       ontypechange={updateParameterType}
     />
   </div>
+</section>
+<section class="panel danger-panel">
+  <div class="panel-heading">
+    <div>
+      <h2>Hapus device</h2>
+      <p>
+        Device disembunyikan dari daftar dan tidak bisa mengirim data lagi. Data
+        history tetap tersimpan. Ketik nama device untuk melanjutkan.
+      </p>
+    </div>
+  </div>
+  <label class="wide-field"
+    >Ketik <strong>{device.label}</strong>
+    <input
+      bind:value={confirmName}
+      autocomplete="off"
+      disabled={deleting}
+      aria-label="Konfirmasi nama device"
+    /></label
+  >
+  <button
+    class="danger"
+    onclick={() => void deleteDevice()}
+    disabled={deleting || confirmName.trim() !== device.label}
+    >{deleting ? 'Menghapus…' : 'Hapus device'}</button
+  >
 </section>
 {#if notice}<p class="toast success" role="status">
     {notice}

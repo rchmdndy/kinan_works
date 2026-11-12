@@ -123,6 +123,10 @@
   function updateDevice(device: Device) {
     devices = devices.map((item) => (item.id === device.id ? device : item));
   }
+  function deletedDevice(deviceId: string) {
+    devices = devices.filter((item) => item.id !== deviceId);
+    window.location.hash = '#devices';
+  }
   function createdDevice(device: Device, secret: string) {
     devices = [...devices, device];
     secretDeviceId = device.id;
@@ -188,6 +192,7 @@
         {#await loaders.edit() then page}<page.default
             device={selectedDevice}
             ondevicechange={updateDevice}
+            ondevicedelete={deletedDevice}
           />{/await}
       {:else if route.page === 'credential'}
         {#await loaders.credential() then page}<page.default

@@ -37,7 +37,8 @@ import type {
   TelemetryPacket,
 } from './types.js';
 
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 7;
+const notDeleted = sql`${schema.devices.id} NOT IN (SELECT device_id FROM device_deletions)`;
 type DrizzleDatabase = BunSQLiteDatabase<typeof schema>;
 type StoredDevice = typeof schema.devices.$inferSelect;
 type StoredUser = typeof schema.users.$inferSelect;
@@ -150,6 +151,11 @@ function migrate(sqlite: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS device_commands_pending ON device_commands(expires_at) WHERE status = 'pending';
     PRAGMA user_version = 6;
   `);
+  if (version < 7)
+    sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS device_deletions (device_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL);
+    PRAGMA user_version = 7;
+  `);
 }
 
 export function openDatabase(
@@ -253,12 +259,17 @@ export class Repository {
     this.getDeviceStatement = this.db
       .select()
       .from(schema.devices)
-      .where(eq(schema.devices.id, sql.placeholder('id')))
+      .where(and(eq(schema.devices.id, sql.placeholder('id')), notDeleted))
       .prepare();
     this.listDevicesStatement = this.db
       .select()
       .from(schema.devices)
-      .where(eq(schema.devices.ownerUid, sql.placeholder('ownerUid')))
+      .where(
+        and(
+          eq(schema.devices.ownerUid, sql.placeholder('ownerUid')),
+          notDeleted,
+        ),
+      )
       .orderBy(asc(schema.devices.createdAt), asc(schema.devices.id))
       .prepare();
     this.getSecretStatement = this.db
@@ -267,7 +278,7 @@ export class Repository {
         ciphertext: schema.devices.secretCiphertext,
       })
       .from(schema.devices)
-      .where(eq(schema.devices.id, sql.placeholder('id')))
+      .where(and(eq(schema.devices.id, sql.placeholder('id')), notDeleted))
       .prepare();
     this.insertTelemetryStatement = this.db
       .insert(schema.telemetry)
@@ -436,6 +447,7 @@ export class Repository {
     return this.db
       .select()
       .from(schema.devices)
+      .where(notDeleted)
       .orderBy(asc(schema.devices.id))
       .all()
       .map(rowToDevice);
@@ -466,8 +478,12 @@ export class Repository {
       .run();
   }
   saveDeviceBundle(device: Device, secret: EncryptedSecret): void {
-    if (this.getDevice(device.id))
-      throw new Error(`Device ${device.id} already exists`);
+    const existing = this.db
+      .select({ id: schema.devices.id })
+      .from(schema.devices)
+      .where(eq(schema.devices.id, device.id))
+      .get();
+    if (existing) throw new Error(`Device ${device.id} already exists`);
     this.writeDevice(device, secret);
   }
   updateDevice(
@@ -484,8 +500,29 @@ export class Repository {
     this.writeDevice(updated, encrypted);
     return updated;
   }
-  deleteDevice(deviceId: string): void {
-    this.db.delete(schema.devices).where(eq(schema.devices.id, deviceId)).run();
+  /**
+   * Soft delete. Keeps every stored row, hides the device, and bumps the
+   * credential version so the old device secret stops working.
+   */
+  softDeleteDevice(deviceId: string, now = Date.now()): boolean {
+    const device = this.getDevice(deviceId);
+    if (!device) return false;
+    this.sqlite.transaction(() => {
+      this.db
+        .insert(schema.deviceDeletions)
+        .values({ deviceId, deletedAt: now })
+        .run();
+      this.db
+        .update(schema.devices)
+        .set({
+          active: 0,
+          credentialVersion: device.credentialVersion + 1,
+          updatedAt: now,
+        })
+        .where(eq(schema.devices.id, deviceId))
+        .run();
+    })();
+    return true;
   }
 
   saveTelemetry(

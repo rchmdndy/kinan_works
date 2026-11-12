@@ -29,6 +29,13 @@ export const devices = sqliteTable(
   (table) => [index('devices_owner_uid').on(table.ownerUid)],
 );
 
+// Soft delete: a device with a row here is hidden everywhere and can no longer
+// authenticate, but its telemetry, commands and exports stay in the database.
+export const deviceDeletions = sqliteTable('device_deletions', {
+  deviceId: text('device_id').primaryKey(),
+  deletedAt: integer('deleted_at').notNull(),
+});
+
 export const appMetadata = sqliteTable('app_metadata', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),

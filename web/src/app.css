@@ -128,6 +128,20 @@ button.secondary,
   color: var(--ink);
   background: var(--panel);
 }
+button.danger {
+  border-color: var(--red);
+  color: #fff;
+  background: var(--red);
+}
+button.danger:hover:not(:disabled) {
+  background: #9f3131;
+}
+.danger-panel {
+  margin-top: 16px;
+  display: grid;
+  gap: 12px;
+  border-color: #efc4c4;
+}
 button.secondary:hover:not(:disabled),
 .button.secondary:hover {
   border-color: #b6c8e4;

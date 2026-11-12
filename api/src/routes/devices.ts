@@ -170,6 +170,16 @@ export function createDeviceRoutes(dependencies: AppDependencies) {
       await broker.sync();
       return { device: updated };
     })
+    .delete('/:deviceId', async ({ request, params, set }) => {
+      const session = mutationSession(request, set, dependencies);
+      if (!('user' in session)) return session;
+      const device = repository.getDevice(params.deviceId);
+      if (!device || device.ownerUid !== session.user.id)
+        return error(set, 404, 'Device not found');
+      repository.softDeleteDevice(device.id);
+      await broker.sync();
+      return { ok: true };
+    })
     .post('/:deviceId/rotate', async ({ request, params, set }) => {
       const session = mutationSession(request, set, dependencies);
       if (!('user' in session)) return session;
