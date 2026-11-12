@@ -9,6 +9,7 @@ import {
   buildWorkbookBytes,
   formatWib,
   safeExportName,
+  wibSerial,
   type ExportTable,
 } from './xlsx-writer';
 
@@ -157,70 +158,79 @@ export class ExportWorker {
     const setpointHistory = hasSetpoints
       ? this.loadSetpointHistory(job, parameters)
       : null;
-    const telemetryRows: WorkerTelemetryRow[] = [];
-    // Keyset pagination walks from newest to oldest inside [start, end).
-    let cursor: Cursor | null = null;
-    while (true) {
-      const page = this.fetchPage(job, cursor);
-      if (!page.length) break;
-      telemetryRows.push(...page);
-      const last = page.at(-1)!;
-      cursor = { timestamp: last.timestamp, writeId: last.write_id };
-      if (telemetryRows.length >= this.config.EXPORTER_MAX_ROWS)
-        throw new Error(
-          `Ekspor melebihi batas maksimum ${this.config.EXPORTER_MAX_ROWS} baris.`,
-        );
-    }
-    telemetryRows.reverse();
-    const events = (setpointHistory ?? []).filter(
-      (row) => row.sentAt >= job.start && row.sentAt < job.end,
-    );
-    const rows: ExportTable['rows'] = [
-      ...telemetryRows.map((row) => ({
-        timestamp: row.timestamp,
-        order: 1,
-        key: row.write_id,
-        values: JSON.parse(row.values_json) as Record<
-          string,
-          { status: string; value?: number }
-        >,
-      })),
-      ...events.map((event) => ({
-        timestamp: event.sentAt,
-        order: 0,
-        key: event.commandId,
-        event,
-      })),
-    ]
-      .sort(
-        (a, b) =>
-          a.timestamp - b.timestamp ||
-          a.order - b.order ||
-          a.key.localeCompare(b.key),
-      )
-      .map((entry) => {
-        if ('event' in entry) {
-          const setpointValues = setpoints.map((parameter) =>
-            entry.event.status === 'succeeded' &&
-            entry.event.parameterId === parameter.id
-              ? entry.event.target
-              : '',
+    const columnCount = 1 + selected.length + setpoints.length;
+    // Scoped so the raw pages can be collected once the sheet rows exist.
+    const { rows, rowCount } = (() => {
+      const telemetryRows: WorkerTelemetryRow[] = [];
+      // Keyset pagination walks from newest to oldest inside [start, end).
+      let cursor: Cursor | null = null;
+      while (true) {
+        const page = this.fetchPage(job, cursor);
+        if (!page.length) break;
+        telemetryRows.push(...page);
+        const last = page.at(-1)!;
+        cursor = { timestamp: last.timestamp, writeId: last.write_id };
+        if (telemetryRows.length >= this.config.EXPORTER_MAX_ROWS)
+          throw new Error(
+            `Ekspor melebihi batas maksimum ${this.config.EXPORTER_MAX_ROWS} baris.`,
           );
+        if (telemetryRows.length * columnCount > this.config.EXPORTER_MAX_CELLS)
+          throw new Error(
+            `Ekspor melebihi batas maksimum ${this.config.EXPORTER_MAX_CELLS} sel.`,
+          );
+      }
+      telemetryRows.reverse();
+      const events = (setpointHistory ?? []).filter(
+        (row) => row.sentAt >= job.start && row.sentAt < job.end,
+      );
+      const rows: ExportTable['rows'] = [
+        ...telemetryRows.map((row) => ({
+          timestamp: row.timestamp,
+          order: 1,
+          key: row.write_id,
+          values: JSON.parse(row.values_json) as Record<
+            string,
+            { status: string; value?: number }
+          >,
+        })),
+        ...events.map((event) => ({
+          timestamp: event.sentAt,
+          order: 0,
+          key: event.commandId,
+          event,
+        })),
+      ]
+        .sort(
+          (a, b) =>
+            a.timestamp - b.timestamp ||
+            a.order - b.order ||
+            a.key.localeCompare(b.key),
+        )
+        .map((entry) => {
+          if ('event' in entry) {
+            const setpointValues = setpoints.map((parameter) =>
+              entry.event.status === 'succeeded' &&
+              entry.event.parameterId === parameter.id
+                ? entry.event.target
+                : '',
+            );
+            return [
+              wibSerial(entry.timestamp),
+              ...selected.map(() => ''),
+              ...setpointValues,
+            ];
+          }
           return [
-            entry.timestamp,
-            ...selected.map(() => ''),
-            ...setpointValues,
+            wibSerial(entry.timestamp),
+            ...selected.map((parameter) => {
+              const reading = entry.values[parameter.id];
+              return reading?.status === 'ok' ? (reading.value as number) : '';
+            }),
+            ...setpoints.map(() => ''),
           ];
-        }
-        return [
-          entry.timestamp,
-          ...selected.map((parameter) => {
-            const reading = entry.values[parameter.id];
-            return reading?.status === 'ok' ? (reading.value as number) : '';
-          }),
-          ...setpoints.map(() => ''),
-        ];
-      });
+        });
+      return { rows, rowCount: telemetryRows.length };
+    })();
     const bytes = buildWorkbookBytes({
       headers,
       rows,
@@ -238,7 +248,7 @@ export class ExportWorker {
     return {
       filePath: fileName,
       fileBytes: bytes.byteLength,
-      rowCount: telemetryRows.length,
+      rowCount,
     };
   }
 

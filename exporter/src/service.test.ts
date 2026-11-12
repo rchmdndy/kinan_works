@@ -21,6 +21,7 @@ const config: ExporterConfig = {
   EXPORTER_MAX_TOTAL_PER_USER_PER_DAY: 100,
   EXPORTER_RETENTION_MS: 7 * 24 * 60 * 60 * 1000,
   EXPORTER_MAX_ROWS: 100,
+  EXPORTER_MAX_CELLS: 2_000_000,
 };
 
 let store: ExportStore;

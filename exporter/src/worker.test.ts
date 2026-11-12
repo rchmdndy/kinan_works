@@ -28,6 +28,7 @@ const config: ExporterConfig = {
   EXPORTER_MAX_TOTAL_PER_USER_PER_DAY: 100,
   EXPORTER_RETENTION_MS: 7 * 24 * 60 * 60 * 1000,
   EXPORTER_MAX_ROWS: 100,
+  EXPORTER_MAX_CELLS: 2_000_000,
 };
 
 function seedTelemetry(count: number, sameTimestamp = false): void {
@@ -339,6 +340,27 @@ describe('export worker', () => {
       /batas maksimum/,
     );
     limitedStore.close();
+  });
+
+  test('enforces the maximum cell guard', async () => {
+    seedTelemetry(10);
+    const cellStore = new ExportStore(`${tmp}/store-cells.sqlite`);
+    const cellWorker = new ExportWorker(cellStore, {
+      ...config,
+      EXPORTER_MAX_CELLS: 10,
+    });
+    const job = cellStore.createJob(
+      {
+        userId: 'user_1',
+        deviceId,
+        parameterIds: ['p1'],
+        start: 0,
+        end: 2_000_000,
+      },
+      'Demo device',
+    );
+    await expect(cellWorker.runExport(job)).rejects.toThrow(/maksimum 10 sel/);
+    cellStore.close();
   });
 
   test('writes full setpoint command history with explicit pre-period context', async () => {

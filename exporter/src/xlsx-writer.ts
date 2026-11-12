@@ -128,6 +128,36 @@ export function buildTableHeader(
   };
 }
 
+const HEADER_STYLE: XLSX.CellStyle = {
+  fill: { patternType: 'solid', fgColor: { rgb: '1B2A4A' } },
+  font: { color: { rgb: 'FFFFFF' }, bold: true, name: 'Arial', sz: 11 },
+  alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+};
+
+// One shared object: every data row has the same fixed height.
+const DATA_ROW_HEIGHT: XLSX.RowInfo = { hpt: 20 };
+
+function dataStyle(
+  rgb: string,
+  horizontal: 'center' | 'right',
+): XLSX.CellStyle {
+  return {
+    fill: { patternType: 'solid', fgColor: { rgb } },
+    font: { color: { rgb: '37352F' }, name: 'Arial', sz: 11 },
+    alignment: { horizontal, vertical: 'center' },
+  };
+}
+
+// Row parity (odd rows white, even rows off-white) x column alignment.
+const ODD_ROW_STYLES: [XLSX.CellStyle, XLSX.CellStyle] = [
+  dataStyle('FFFFFF', 'center'),
+  dataStyle('FFFFFF', 'right'),
+];
+const EVEN_ROW_STYLES: [XLSX.CellStyle, XLSX.CellStyle] = [
+  dataStyle('F7F7F5', 'center'),
+  dataStyle('F7F7F5', 'right'),
+];
+
 function styleTable(
   sheet: XLSX.WorkSheet,
   headerCount: number,
@@ -148,34 +178,20 @@ function styleTable(
   }));
   sheet['!rows'] = [
     { hpt: 30 },
-    ...Array.from({ length: rowCount }, () => ({ hpt: 20 })),
+    ...Array.from({ length: rowCount }, () => DATA_ROW_HEIGHT),
   ];
   for (let column = 0; column < headerCount; column += 1) {
     const cell = sheet[XLSX.utils.encode_cell({ r: 0, c: column })];
     if (!cell) continue;
-    cell.s = {
-      fill: { patternType: 'solid', fgColor: { rgb: '1B2A4A' } },
-      font: { color: { rgb: 'FFFFFF' }, bold: true, name: 'Arial', sz: 11 },
-      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-    };
+    cell.s = HEADER_STYLE;
   }
   for (let row = 1; row <= rowCount; row += 1) {
+    const rowStyles = row % 2 ? ODD_ROW_STYLES : EVEN_ROW_STYLES;
     for (let column = 0; column < headerCount; column += 1) {
       const address = XLSX.utils.encode_cell({ r: row, c: column });
       const cell = sheet[address];
       if (!cell) continue;
-      cell.s = {
-        fill: {
-          patternType: 'solid',
-          fgColor: { rgb: row % 2 ? 'FFFFFF' : 'F7F7F5' },
-        },
-        font: { color: { rgb: '37352F' }, name: 'Arial', sz: 11 },
-        alignment: {
-          horizontal:
-            column === 0 || dateColumns.includes(column) ? 'center' : 'right',
-          vertical: 'center',
-        },
-      };
+      cell.s = rowStyles[column === 0 || dateColumns.includes(column) ? 0 : 1];
     }
     for (const column of dateColumns) {
       const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
@@ -192,16 +208,9 @@ function styleTable(
 }
 
 export function buildWorkbookBytes(table: ExportTable): Uint8Array {
-  // Date columns carry epoch-ms values; serialise them to the WIB wall clock
-  // here so nothing downstream depends on the writer's timezone.
-  const dataSheet = XLSX.utils.aoa_to_sheet([
-    table.headers,
-    ...table.rows.map((row) =>
-      row.map((value, column) =>
-        column === 0 && typeof value === 'number' ? wibSerial(value) : value,
-      ),
-    ),
-  ]);
+  // Date columns already carry WIB serial values from the worker, so the rows
+  // go to the worksheet as-is.
+  const dataSheet = XLSX.utils.aoa_to_sheet([table.headers, ...table.rows]);
   const infoSheet = XLSX.utils.aoa_to_sheet([
     ['parameterId', 'label', 'unit', 'points', 'note'],
     ...table.info,
@@ -224,10 +233,13 @@ export function buildWorkbookBytes(table: ExportTable): Uint8Array {
   for (let row = 1; row <= table.info.length; row += 1) {
     const note = infoSheet[XLSX.utils.encode_cell({ r: row, c: 4 })];
     if (note?.s)
-      note.s.alignment = {
-        horizontal: 'left',
-        vertical: 'center',
-        wrapText: true,
+      note.s = {
+        ...note.s,
+        alignment: {
+          horizontal: 'left',
+          vertical: 'center',
+          wrapText: true,
+        },
       };
   }
   const setpointRows = table.setpointHistory?.length
@@ -282,10 +294,13 @@ export function buildWorkbookBytes(table: ExportTable): Uint8Array {
         const cell =
           setpointSheet[XLSX.utils.encode_cell({ r: row, c: column })];
         if (cell?.s)
-          cell.s.alignment = {
-            horizontal: 'left',
-            vertical: 'center',
-            wrapText: true,
+          cell.s = {
+            ...cell.s,
+            alignment: {
+              horizontal: 'left',
+              vertical: 'center',
+              wrapText: true,
+            },
           };
       }
       setpointSheet['!rows']![row] = { hpt: 36 };

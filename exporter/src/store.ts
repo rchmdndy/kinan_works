@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS exports (
   finished_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS exports_user_created ON exports(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS exports_queued ON exports(created_at) WHERE status = 'queued';
 `;
 
 function rowToRecord(row: ExportRow): ExportJobRecord {

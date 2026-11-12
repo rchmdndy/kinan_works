@@ -24,6 +24,7 @@ const envSchema = z.object({
     .positive()
     .default(7 * 24 * 60 * 60 * 1000),
   EXPORTER_MAX_ROWS: z.coerce.number().int().positive().default(1_000_000),
+  EXPORTER_MAX_CELLS: z.coerce.number().int().positive().default(2_000_000),
 });
 
 export type ExporterConfig = z.infer<typeof envSchema>;

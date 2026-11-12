@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
 
 FROM dependencies AS build
 COPY exporter exporter
-RUN bun build exporter/src/index.ts --target bun --outdir exporter/dist
+RUN bun build exporter/src/index.ts --target bun --minify --outdir exporter/dist
 
 FROM oven/bun:1.3.14-alpine AS runtime
 ENV NODE_ENV=production \
