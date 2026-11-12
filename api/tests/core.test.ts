@@ -158,7 +158,7 @@ describe('security and SQLite primitives', () => {
     repo.saveDeviceBundle(device('legacy-device'), secret);
     expect(repo.getDevice('legacy-device')).toEqual(device('legacy-device'));
     expect(repo.listDevices('owner-a')).toHaveLength(1);
-    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 5 });
+    expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 6 });
     const after = db
       .query(
         "SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY name",

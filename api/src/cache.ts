@@ -79,17 +79,16 @@ export class RedisTelemetryCache implements TelemetryCache {
     listener: (packet: TelemetryPacket) => void,
   ): Promise<() => Promise<void>> {
     const topic = channel(deviceId);
-    await this.subscriber.subscribe(topic, (message) => {
+    const handler = (message: string) => {
       try {
         listener(JSON.parse(message) as TelemetryPacket);
       } catch {
         console.error('discarded invalid Redis telemetry event');
       }
-    });
+    };
+    await this.subscriber.subscribe(topic, handler);
     return async () => {
-      await this.subscriber
-        .unsubscribe(topic, listener as never)
-        .catch(() => undefined);
+      await this.subscriber.unsubscribe(topic, handler).catch(() => undefined);
     };
   }
 }

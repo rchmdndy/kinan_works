@@ -79,13 +79,14 @@ export function createExportRoutes(dependencies: AppDependencies) {
         return error(set, 502, 'Layanan ekspor tidak tersedia.');
       const body = (await response.json()) as { exports: ExportSummary[] };
       // The exporter stores no device label; resolve it from the owner's devices.
+      const labels = repository.getDeviceLabels(
+        body.exports.map((item) => item.deviceId),
+      );
       return {
         exports: body.exports.map((item) => ({
           ...item,
           deviceLabel:
-            item.deviceLabel ||
-            repository.getDevice(item.deviceId)?.label ||
-            item.deviceId,
+            item.deviceLabel || labels.get(item.deviceId) || item.deviceId,
         })),
       };
     })

@@ -12,14 +12,14 @@ RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
 FROM dependencies AS build
 COPY api api
 COPY docker-compose.vps.yml docker-compose.vps.yml
-RUN bun build api/src/index.ts api/src/seed.ts api/src/admin.ts api/src/firmware-seed.ts --target bun --outdir api/dist
+RUN bun build api/src/index.ts api/src/seed.ts api/src/admin.ts api/src/firmware-seed.ts --target bun --minify --splitting --outdir api/dist
 
 FROM oven/bun:1.3.14-alpine AS runtime
 ENV NODE_ENV=production \
     API_PORT=3000 \
     SQLITE_PATH=/data/kinan.sqlite
 WORKDIR /app
-RUN apk add --no-cache mosquitto mosquitto-clients
+RUN apk add --no-cache mosquitto
 COPY --from=build --chown=bun:bun /app/api/dist ./dist
 # Deployment extracts the revision-matching VPS compose file from this image.
 COPY --from=build /app/docker-compose.vps.yml ./docker-compose.vps.yml

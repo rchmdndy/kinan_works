@@ -41,6 +41,10 @@ test('control lifecycle: retained recovery, deduplication, ordering, timeout, la
   service.publisher = () => {
     publishes++;
   };
+  let notifications = 0;
+  const unsubscribe = service.subscribe(id, () => {
+    notifications++;
+  });
   const ingest = (kind: string, packet: unknown, retained = false) =>
     service.consume(id, kind, Buffer.from(JSON.stringify(packet)), retained);
   ingest('state', model.state, true);
@@ -54,6 +58,8 @@ test('control lifecycle: retained recovery, deduplication, ordering, timeout, la
   expect(service.snapshot(id).online).toBe(false);
   ingest('availability', availability);
   expect(service.snapshot(id).online).toBe(true);
+  const availabilityNotifications = notifications;
+  expect(availabilityNotifications).toBeGreaterThan(0);
   const input = {
     commandId: crypto.randomUUID(),
     parameterId: switchParameter.id,
@@ -61,6 +67,7 @@ test('control lifecycle: retained recovery, deduplication, ordering, timeout, la
   };
   const first = service.issue(id, input);
   expect(first.status).toBe('pending');
+  expect(notifications).toBeGreaterThan(availabilityNotifications);
   service.issue(id, input);
   expect(publishes).toBe(1);
   expect(() =>
@@ -101,9 +108,12 @@ test('control lifecycle: retained recovery, deduplication, ordering, timeout, la
     })?.reason,
   ).toBe('invalid parameter value');
   expect(model.execute(packet, Date.now(), true)).toBeNull();
+  unsubscribe();
+  const unsubscribed = notifications;
   service.disconnect();
   expect(service.snapshot(id).online).toBe(false);
   ingest('availability', availability);
+  expect(notifications).toBe(unsubscribed);
   repo.updateDevice(id, { credentialVersion: 2 });
   expect(service.snapshot(id).online).toBe(false);
   expect(() =>

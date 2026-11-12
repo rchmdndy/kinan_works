@@ -138,5 +138,8 @@ export const deviceCommands = sqliteTable(
       table.deviceId,
       sql`${table.expiresAt} DESC`,
     ),
+    index('device_commands_pending')
+      .on(table.expiresAt)
+      .where(sql`status = 'pending'`),
   ],
 );

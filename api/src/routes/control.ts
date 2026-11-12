@@ -40,12 +40,14 @@ export function createControlRoutes({
     .get('/:deviceId/control/events', ({ request, params }) => {
       authorized(request, params.deviceId);
       let timer: ReturnType<typeof setInterval> | undefined;
+      let unsubscribe: (() => void) | undefined;
       let closed = false;
       let last = '';
       const encoder = new TextEncoder();
       const cleanup = () => {
         closed = true;
-        if (timer) clearInterval(timer);
+        clearInterval(timer);
+        unsubscribe?.();
         request.signal.removeEventListener('abort', abort);
       };
       let closeStream: (() => void) | undefined;
@@ -62,25 +64,25 @@ export function createControlRoutes({
               /* Already closed. */
             }
           };
-          const send = () => {
+          const send = (reauthorize = false) => {
             if (closed) return;
             try {
-              authorized(request, params.deviceId);
+              if (reauthorize) authorized(request, params.deviceId);
               const current = JSON.stringify(control.snapshot(params.deviceId));
-              if (current !== last) {
-                controller.enqueue(
-                  encoder.encode(`event: control\ndata: ${current}\n\n`),
-                );
-                last = current;
-              } else controller.enqueue(encoder.encode(': heartbeat\n\n'));
+              if (current === last) return;
+              controller.enqueue(
+                encoder.encode(`event: control\ndata: ${current}\n\n`),
+              );
+              last = current;
             } catch {
               abort();
             }
           };
-          timer = setInterval(send, 1000);
+          timer = setInterval(() => send(true), 10_000);
+          unsubscribe = control.subscribe(params.deviceId, () => send());
           request.signal.addEventListener('abort', abort, { once: true });
           if (request.signal.aborted) abort();
-          else send();
+          else send(true);
         },
         cancel() {
           cleanup();

@@ -13,10 +13,23 @@ import {
 
 export class ControlService {
   private live = new Map<string, { connectionId: string; seenAt: number }>();
+  private listeners = new Map<string, Set<() => void>>();
   publisher: ((deviceId: string, command: Command) => void) | null = null;
   constructor(private readonly repository: Repository) {}
   disconnect() {
     this.live.clear();
+  }
+  subscribe(deviceId: string, listener: () => void): () => void {
+    let listeners = this.listeners.get(deviceId);
+    if (!listeners) this.listeners.set(deviceId, (listeners = new Set()));
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.listeners.delete(deviceId);
+    };
+  }
+  private notify(deviceId: string): void {
+    for (const listener of this.listeners.get(deviceId) ?? []) listener();
   }
   snapshot(deviceId: string) {
     this.repository.expireCommands();
@@ -82,6 +95,7 @@ export class ControlService {
           result,
           reason: result.reason,
         });
+        this.notify(deviceId);
         return;
       }
       if (kind === 'state') {
@@ -109,6 +123,7 @@ export class ControlService {
         )
           return;
         this.repository.saveControl(deviceId, 'state', state);
+        this.notify(deviceId);
       } else if (kind === 'availability') {
         const availability = availabilitySchema.parse(raw);
         if (
@@ -142,6 +157,7 @@ export class ControlService {
             connectionId: availability.connectionId,
             seenAt: Date.now(),
           });
+        this.notify(deviceId);
       }
     } catch {
       /* Invalid device messages never alter control state. */
@@ -159,6 +175,7 @@ export class ControlService {
       )
         throw new ControlError(409, 'Command ID already used');
       this.repository.expireCommands();
+      this.notify(deviceId);
       return this.repository.getCommand(existing.commandId)!;
     }
     const snapshot = this.snapshot(deviceId);
@@ -208,6 +225,7 @@ export class ControlService {
         reason: 'Transport failed; execution outcome unknown',
       });
     }
+    this.notify(deviceId);
     return this.repository.getCommand(command.commandId)!;
   }
 }

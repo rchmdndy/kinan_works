@@ -1,5 +1,17 @@
 import { Database as SqliteDatabase } from 'bun:sqlite';
-import { and, asc, count, desc, eq, gte, gt, lt, lte, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  gt,
+  inArray,
+  lt,
+  lte,
+  sql,
+} from 'drizzle-orm';
 import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import {
   chmodSync,
@@ -25,7 +37,7 @@ import type {
   TelemetryPacket,
 } from './types.js';
 
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 6;
 type DrizzleDatabase = BunSQLiteDatabase<typeof schema>;
 type StoredDevice = typeof schema.devices.$inferSelect;
 type StoredUser = typeof schema.users.$inferSelect;
@@ -133,6 +145,11 @@ function migrate(sqlite: SqliteDatabase): void {
     }
     sqlite.exec('PRAGMA user_version = 5');
   }
+  if (version < 6)
+    sqlite.exec(`
+    CREATE INDEX IF NOT EXISTS device_commands_pending ON device_commands(expires_at) WHERE status = 'pending';
+    PRAGMA user_version = 6;
+  `);
 }
 
 export function openDatabase(
@@ -143,7 +160,7 @@ export function openDatabase(
   const existed = path !== ':memory:' && existsSync(path);
   const sqlite = new SqliteDatabase(path, { create: true, strict: true });
   sqlite.exec(
-    'PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL;',
+    'PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL; PRAGMA cache_size = -16000; PRAGMA mmap_size = 67108864;',
   );
   if (path !== ':memory:') chmodSync(path, 0o600);
   if (options.migrate !== false) {
@@ -227,6 +244,9 @@ export class Repository {
   private readonly insertTelemetryStatement;
   private readonly getTelemetryLatestStatement;
   private readonly upsertTelemetryLatestStatement;
+  private readonly getLatestStatement;
+  private readonly getRecentStatement;
+  private readonly getHistoryStatement;
 
   constructor(private readonly sqlite: SqliteDatabase) {
     this.db = drizzle({ client: sqlite, schema });
@@ -291,6 +311,31 @@ export class Repository {
         },
       })
       .prepare();
+    this.getLatestStatement = this.db
+      .select()
+      .from(schema.telemetryLatest)
+      .where(eq(schema.telemetryLatest.deviceId, sql.placeholder('deviceId')))
+      .prepare();
+    this.getRecentStatement = this.db
+      .select()
+      .from(schema.telemetry)
+      .where(eq(schema.telemetry.deviceId, sql.placeholder('deviceId')))
+      .orderBy(desc(schema.telemetry.timestamp), desc(schema.telemetry.writeId))
+      .limit(sql.placeholder('limit'))
+      .prepare();
+    this.getHistoryStatement = this.db
+      .select()
+      .from(schema.telemetry)
+      .where(
+        and(
+          eq(schema.telemetry.deviceId, sql.placeholder('deviceId')),
+          gte(schema.telemetry.timestamp, sql.placeholder('start')),
+          lt(schema.telemetry.timestamp, sql.placeholder('end')),
+        ),
+      )
+      .orderBy(desc(schema.telemetry.timestamp), desc(schema.telemetry.writeId))
+      .limit(sql.placeholder('limit'))
+      .prepare();
   }
 
   getControl(deviceId: string): {
@@ -353,18 +398,20 @@ export class Repository {
     ).map((row) => JSON.parse(row.packet_json));
   }
   expireCommands(now = Date.now()): void {
-    for (const row of this.sqlite
-      .query(
-        "SELECT packet_json FROM device_commands WHERE status = 'pending' AND expires_at <= ?",
-      )
-      .all(now) as { packet_json: string }[]) {
-      const command: StoredCommand = JSON.parse(row.packet_json);
-      this.saveCommand({
-        ...command,
-        status: 'unknown',
-        reason: 'Execution outcome unknown; no result before expiry',
-      });
-    }
+    this.sqlite.transaction(() => {
+      for (const row of this.sqlite
+        .query(
+          "SELECT packet_json FROM device_commands WHERE status = 'pending' AND expires_at <= ?",
+        )
+        .all(now) as { packet_json: string }[]) {
+        const command: StoredCommand = JSON.parse(row.packet_json);
+        this.saveCommand({
+          ...command,
+          status: 'unknown',
+          reason: 'Execution outcome unknown; no result before expiry',
+        });
+      }
+    })();
   }
   close(): void {
     this.sqlite.close();
@@ -372,6 +419,15 @@ export class Repository {
   getDevice(deviceId: string): Device | null {
     const row = this.getDeviceStatement.get({ id: deviceId });
     return row ? rowToDevice(row) : null;
+  }
+  getDeviceLabels(deviceIds: string[]): Map<string, string> {
+    if (deviceIds.length === 0) return new Map();
+    const rows = this.db
+      .select({ id: schema.devices.id, label: schema.devices.label })
+      .from(schema.devices)
+      .where(inArray(schema.devices.id, deviceIds))
+      .all();
+    return new Map(rows.map((row) => [row.id, row.label]));
   }
   listDevices(ownerUid: string): Device[] {
     return this.listDevicesStatement.all({ ownerUid }).map(rowToDevice);
@@ -467,21 +523,12 @@ export class Repository {
     });
   }
   getLatest(deviceId: string): TelemetryPacket | null {
-    const row = this.db
-      .select()
-      .from(schema.telemetryLatest)
-      .where(eq(schema.telemetryLatest.deviceId, deviceId))
-      .get();
+    const row = this.getLatestStatement.get({ deviceId });
     return row ? rowToPacket(row) : null;
   }
   getRecent(deviceId: string, limit = 10): TelemetryPacket[] {
-    return this.db
-      .select()
-      .from(schema.telemetry)
-      .where(eq(schema.telemetry.deviceId, deviceId))
-      .orderBy(desc(schema.telemetry.timestamp), desc(schema.telemetry.writeId))
-      .limit(limit)
-      .all()
+    return this.getRecentStatement
+      .all({ deviceId, limit })
       .reverse()
       .map(rowToPacket);
   }
@@ -491,19 +538,8 @@ export class Repository {
     end: number,
     limit: number,
   ): TelemetryPacket[] {
-    return this.db
-      .select()
-      .from(schema.telemetry)
-      .where(
-        and(
-          eq(schema.telemetry.deviceId, deviceId),
-          gte(schema.telemetry.timestamp, start),
-          lt(schema.telemetry.timestamp, end),
-        ),
-      )
-      .orderBy(desc(schema.telemetry.timestamp), desc(schema.telemetry.writeId))
-      .limit(limit)
-      .all()
+    return this.getHistoryStatement
+      .all({ deviceId, start, end, limit })
       .reverse()
       .map(rowToPacket);
   }
@@ -524,20 +560,16 @@ export class Repository {
     );
   }
   pruneTelemetry(cutoff: number, deviceId?: string): number {
-    return this.db.transaction(
-      () =>
-        this.db
-          .delete(schema.telemetry)
-          .where(
-            deviceId
-              ? and(
-                  eq(schema.telemetry.deviceId, deviceId),
-                  lt(schema.telemetry.timestamp, cutoff),
-                )
-              : lt(schema.telemetry.timestamp, cutoff),
-          )
-          .returning({ deviceId: schema.telemetry.deviceId })
-          .all().length,
+    return this.db.transaction(() =>
+      deviceId
+        ? this.sqlite
+            .query(
+              'DELETE FROM telemetry WHERE device_id = ? AND timestamp < ?',
+            )
+            .run(deviceId, cutoff).changes
+        : this.sqlite
+            .query('DELETE FROM telemetry WHERE timestamp < ?')
+            .run(cutoff).changes,
     );
   }
 
@@ -624,11 +656,6 @@ export class Repository {
       )
       .get();
     if (!row) return null;
-    this.db
-      .update(schema.sessions)
-      .set({ lastSeenAt: now })
-      .where(eq(schema.sessions.idHash, idHash))
-      .run();
     return {
       user: {
         id: row.id,
