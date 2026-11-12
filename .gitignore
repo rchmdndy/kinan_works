@@ -18,6 +18,7 @@ coverage/
 /data/
 /.benchmark/
 .zcode/
+.omc/
 .DS_Store
 firmware/**/platform_config.h
 
