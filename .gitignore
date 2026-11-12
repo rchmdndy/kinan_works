@@ -21,6 +21,7 @@ coverage/
 .omc/
 .DS_Store
 firmware/**/platform_config.h
+firmware/**/secrets.h
 
 # Local-only notes
 *.local.md
