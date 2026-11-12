@@ -68,4 +68,4 @@ export function acceptsValue(
   );
 }
 export const CONTROL_FRESH_MS = 45_000;
-export const COMMAND_TTL_MS = 10_000;
+export const COMMAND_TTL_MS = 60_000;

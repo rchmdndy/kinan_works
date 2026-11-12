@@ -111,7 +111,7 @@ PUBLISH   devices/growth-chamber-firmware-v1/command-results retain=false
   "credentialVersion": 2,
   "timestamp": 1737021600000,
   "connectionId": "00000000-0000-4000-8000-000000000001",
-  "expiresAt": 1737021610000,
+  "expiresAt": 1737021660000,
   "revision": 0
 }
 // Target contoh adalah kontrol pertama; handler wajib mendukung SEMUA ID kontrol di atas.
@@ -119,7 +119,7 @@ PUBLISH   devices/growth-chamber-firmware-v1/command-results retain=false
 //   parse + validasi bentuk; abaikan malformed/retained command.
 //   jika commandId sudah diproses dalam sesi: jangan eksekusi ulang (adapter: cache 32 ID).
 //   cek credentialVersion, connectionId, revision == sesi/state lokal saat ini.
-//   cek expiresAt > nowMs(), timestamp <= nowMs()+5000; TTL backend 10 detik.
+//   cek expiresAt > nowMs(), timestamp <= nowMs()+5000; TTL backend 1 menit.
 //   cek parameterId adalah kontrol dikenal, tipe value tepat, angka finite dan bounds.
 //   cache commandId; jika tidak valid: rejected + reason, tanpa mengubah kontrol.
 //   jika valid: terapkan ke variabel kontrol lokal; revision++; lalu succeeded.

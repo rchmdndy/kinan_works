@@ -95,13 +95,13 @@ ${json({ ...envelope, online: true })}
 // Disconnect terencana: publish online=false sebelum disconnect bila memungkinkan.
 
 4. COMMANDS — terima dari backend, jangan publish command dari firmware
-${json({ commandId, parameterId: target?.id ?? '<ID-kontrol-dashboard>', value: target ? sampleValue(target) : false, ...envelope, expiresAt: envelope.timestamp + 10000, revision: 0 })}
+${json({ commandId, parameterId: target?.id ?? '<ID-kontrol-dashboard>', value: target ? sampleValue(target) : false, ...envelope, expiresAt: envelope.timestamp + 60000, revision: 0 })}
 ${target ? '// Target contoh adalah kontrol pertama; handler wajib mendukung SEMUA ID kontrol di atas.' : '// Tidak ada kontrol pada perangkat ini: contoh bentuk saja, jangan eksekusi target placeholder.'}
 // Pseudocode handler (di luar callback MQTT; publish QoS 1 dapat memanggil poll):
 //   parse + validasi bentuk; abaikan malformed/retained command.
 //   jika commandId sudah diproses dalam sesi: jangan eksekusi ulang (adapter: cache 32 ID).
 //   cek credentialVersion, connectionId, revision == sesi/state lokal saat ini.
-//   cek expiresAt > nowMs(), timestamp <= nowMs()+5000; TTL backend 10 detik.
+//   cek expiresAt > nowMs(), timestamp <= nowMs()+5000; TTL backend 1 menit.
 //   cek parameterId adalah kontrol dikenal, tipe value tepat, angka finite dan bounds.
 //   cache commandId; jika tidak valid: rejected + reason, tanpa mengubah kontrol.
 //   jika valid: terapkan ke variabel kontrol lokal; revision++; lalu succeeded.

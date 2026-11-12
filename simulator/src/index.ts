@@ -5,6 +5,7 @@ import type { Parameter, SensorValue } from '../../api/src/types.js';
 import {
   acceptsValue,
   commandSchema,
+  COMMAND_TTL_MS,
   type DeviceState,
   type CommandResult,
 } from '../../api/src/control-contract.js';
@@ -186,7 +187,7 @@ export class SimulatedDevice {
       command.expiresAt <= now
         ? 'expired'
         : command.timestamp > now + 5000 ||
-            command.expiresAt - command.timestamp > 10000
+            command.expiresAt - command.timestamp > COMMAND_TTL_MS
           ? 'invalid timing'
           : command.credentialVersion !== this.state.credentialVersion ||
               command.connectionId !== this.state.connectionId

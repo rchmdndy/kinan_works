@@ -66,7 +66,7 @@ test('examples match strict backend control envelopes and Growth Chamber mapping
       })),
   );
   expect(result.commandId).toBe(command.commandId);
-  expect(command.expiresAt - command.timestamp).toBe(10000);
+  expect(command.expiresAt - command.timestamp).toBe(60000);
   expect(command.connectionId).toBe(state.connectionId);
   for (const source of [
     'tempSensor',
