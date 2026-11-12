@@ -266,9 +266,11 @@ export class ExportWorker {
     };
   }
 
-  // One row per interval, timestamped at the interval start. The cell holds the
-  // first stored reading of that interval, unmodified; intervals without a
-  // reading stay empty so consecutive rows are always exactly one interval apart.
+  // Real stored readings only. Walking forward in time, a reading is kept when
+  // it is at least one interval after the previously kept one, so consecutive
+  // rows are >= interval apart and every row keeps its own timestamp and
+  // unmodified values. Readings without any valid selected value are skipped.
+  // A setpoint applied since the previous kept row appears on the next kept row.
   private buildIntervalRows(
     job: ExportJobRecord,
     selected: ParameterDefinition[],
@@ -276,60 +278,58 @@ export class ExportWorker {
     setpointHistory: ExportTable['setpointHistory'],
     columnCount: number,
   ): { rows: ExportTable['rows']; rowCount: number } {
-    const step = job.intervalMs;
-    const origin = Math.floor(job.start / step) * step;
-    const buckets = Math.ceil((job.end - origin) / step);
-    if (buckets > this.config.EXPORTER_MAX_ROWS)
-      throw new Error(
-        `Ekspor melebihi batas maksimum ${this.config.EXPORTER_MAX_ROWS} baris.`,
-      );
-    if (buckets * columnCount > this.config.EXPORTER_MAX_CELLS)
-      throw new Error(
-        `Ekspor melebihi batas maksimum ${this.config.EXPORTER_MAX_CELLS} sel.`,
-      );
-    // Pages run newest to oldest, so a later page entry is an earlier reading.
-    const firstReading = new Map<number, string>();
+    const events = (setpointHistory ?? []).filter(
+      (event) =>
+        event.status === 'succeeded' &&
+        event.sentAt >= job.start &&
+        event.sentAt < job.end,
+    );
+    const rows: ExportTable['rows'] = [];
+    let eventIndex = 0;
+    let lastKept = -Infinity;
     let cursor: Cursor | null = null;
     while (true) {
-      const page = this.fetchPage(job, cursor);
+      const page = this.fetchPage(job, cursor, true);
       if (!page.length) break;
-      for (const row of page)
-        firstReading.set(Math.floor(row.timestamp / step), row.values_json);
-      const last = page.at(-1)!;
-      cursor = { timestamp: last.timestamp, writeId: last.write_id };
-    }
-    const applied = new Map<number, Map<string, number>>();
-    for (const event of setpointHistory ?? []) {
-      if (
-        event.status !== 'succeeded' ||
-        event.sentAt < job.start ||
-        event.sentAt >= job.end
-      )
-        continue;
-      const bucket = Math.floor(event.sentAt / step);
-      const targets = applied.get(bucket) ?? new Map<string, number>();
-      targets.set(event.parameterId, event.target);
-      applied.set(bucket, targets);
-    }
-    const rows: ExportTable['rows'] = [];
-    for (let i = 0; i < buckets; i += 1) {
-      const bucket = origin / step + i;
-      const json = firstReading.get(bucket);
-      const values = json
-        ? (JSON.parse(json) as Record<
-            string,
-            { status: string; value?: number }
-          >)
-        : {};
-      const targets = applied.get(bucket);
-      rows.push([
-        wibSerial(bucket * step),
-        ...selected.map((parameter) => {
+      for (const row of page) {
+        if (row.timestamp - lastKept < job.intervalMs) continue;
+        const values = JSON.parse(row.values_json) as Record<
+          string,
+          { status: string; value?: number }
+        >;
+        const cells = selected.map((parameter) => {
           const reading = values[parameter.id];
           return reading?.status === 'ok' ? (reading.value as number) : '';
-        }),
-        ...setpoints.map((parameter) => targets?.get(parameter.id) ?? ''),
-      ]);
+        });
+        if (cells.every((cell) => cell === '')) continue;
+        const targets = new Map<string, number>();
+        while (
+          eventIndex < events.length &&
+          events[eventIndex]!.sentAt <= row.timestamp
+        ) {
+          targets.set(
+            events[eventIndex]!.parameterId,
+            events[eventIndex]!.target,
+          );
+          eventIndex += 1;
+        }
+        rows.push([
+          wibSerial(row.timestamp),
+          ...cells,
+          ...setpoints.map((parameter) => targets.get(parameter.id) ?? ''),
+        ]);
+        lastKept = row.timestamp;
+        if (rows.length >= this.config.EXPORTER_MAX_ROWS)
+          throw new Error(
+            `Ekspor melebihi batas maksimum ${this.config.EXPORTER_MAX_ROWS} baris.`,
+          );
+        if (rows.length * columnCount > this.config.EXPORTER_MAX_CELLS)
+          throw new Error(
+            `Ekspor melebihi batas maksimum ${this.config.EXPORTER_MAX_CELLS} sel.`,
+          );
+      }
+      const last = page.at(-1)!;
+      cursor = { timestamp: last.timestamp, writeId: last.write_id };
     }
     return { rows, rowCount: rows.length };
   }
@@ -425,7 +425,28 @@ export class ExportWorker {
   private fetchPage(
     job: ExportJobRecord,
     cursor: Cursor | null,
+    ascending = false,
   ): WorkerTelemetryRow[] {
+    if (ascending) {
+      return this.telemetryDb
+        .query(
+          `SELECT timestamp, write_id, values_json FROM telemetry
+           WHERE device_id = ? AND timestamp >= ? AND timestamp < ?
+             AND (? IS NULL OR timestamp > ? OR (timestamp = ? AND write_id > ?))
+           ORDER BY timestamp ASC, write_id ASC
+           LIMIT ?`,
+        )
+        .all(
+          job.deviceId,
+          job.start,
+          job.end,
+          cursor?.timestamp ?? null,
+          cursor?.timestamp ?? null,
+          cursor?.timestamp ?? null,
+          cursor?.writeId ?? null,
+          this.config.EXPORTER_PAGE_ROWS,
+        ) as WorkerTelemetryRow[];
+    }
     if (cursor) {
       return this.telemetryDb
         .query(

@@ -543,15 +543,16 @@ describe('export worker', () => {
     });
     store.close();
   });
-  test('per-minute export keeps the first reading unmodified and one row per minute', async () => {
+  test('interval export keeps only stored readings at least one interval apart', async () => {
     seedTelemetry(0);
     const db = new SqliteDatabase(telemetryPath);
     const minute = 6_000_000;
     [
       [minute + 5_000, 1],
       [minute + 15_000, 2],
-      [minute + 2 * 60_000 + 30_000, 7],
-      [minute + 2 * 60_000 + 59_000, 8],
+      [minute + 65_000, 3],
+      [minute + 4 * 60_000 + 30_000, 7],
+      [minute + 4 * 60_000 + 59_000, 8],
     ].forEach(([timestamp, value], i) =>
       db
         .query(
@@ -575,7 +576,7 @@ describe('export worker', () => {
         deviceId,
         parameterIds: ['p1'],
         start: minute,
-        end: minute + 3 * 60_000,
+        end: minute + 5 * 60_000,
         intervalMs: 60_000,
       },
       'Demo device',
@@ -588,9 +589,10 @@ describe('export worker', () => {
       workbook.Sheets['Data']!,
       { raw: true },
     );
-    expect(sheet.map((row) => row['Suhu (C)'] ?? '')).toEqual([1, '', 7]);
+    // 5 s kept; 15 s too close; 65 s kept (60 s after); 4:30 kept; 4:59 too close.
+    expect(sheet.map((row) => row['Suhu (C)'])).toEqual([1, 3, 7]);
     const times = sheet.map((row) => Object.values(row)[0] as number);
-    expect(times[1]! - times[0]!).toBeCloseTo(1 / 1440, 8);
-    expect(times[2]! - times[1]!).toBeCloseTo(1 / 1440, 8);
+    expect((times[1]! - times[0]!) * 1440).toBeCloseTo(1, 6);
+    expect((times[2]! - times[1]!) * 1440).toBeGreaterThanOrEqual(1);
   });
 });

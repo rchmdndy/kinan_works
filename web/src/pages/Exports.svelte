@@ -268,10 +268,10 @@
             {/snippet}
           </Checkbox.Root>
           <span>
-            <strong>Satu baris per menit</strong>
+            <strong>Jarak antar baris minimal 1 menit</strong>
             <small
-              >Nilai pembacaan pertama tiap menit, apa adanya. Menit tanpa data
-              dibiarkan kosong.</small
+              >Hanya data yang tersimpan, apa adanya. Baris berikutnya diambil
+              dari data pertama yang minimal 1 menit setelah baris sebelumnya.</small
             >
           </span>
         </label>
