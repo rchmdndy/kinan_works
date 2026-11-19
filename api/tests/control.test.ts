@@ -301,7 +301,7 @@ test('drifted device clocks and lost results never orphan commands', () => {
   expect(repo.getCommand(second.commandId)?.status).toBe('succeeded');
   expect(repo.getCommand(second.commandId)?.reason).toBeUndefined();
 
-  // A result stamped far outside any plausible skew is still refused.
+  // Devices stamp results with their own clock; a drifted stamp is harmless.
   const third = issue(false);
   ingest('command-results', {
     credentialVersion: 1,
@@ -310,9 +310,8 @@ test('drifted device clocks and lost results never orphan commands', () => {
     commandId: third.commandId,
     status: 'succeeded',
   });
-  expect(repo.getCommand(third.commandId)?.status).toBe('pending');
-  ingest('command-results', model.execute(wire(third))!);
   expect(repo.getCommand(third.commandId)?.status).toBe('succeeded');
+  model.execute(wire(third));
 
   // A revision advance on another connection, or at the same revision,
   // proves nothing about this command.
@@ -330,5 +329,83 @@ test('drifted device clocks and lost results never orphan commands', () => {
     timestamp: Date.now() + 1,
   });
   expect(repo.getCommand(fourth.commandId)?.status).toBe('pending');
+  repo.close();
+});
+
+test('device clock never gates online state', () => {
+  const repo = new Repository(openDatabase(':memory:'));
+  const id = 'device_clockless';
+  repo.saveDeviceBundle(
+    {
+      id,
+      ownerUid: 'owner',
+      label: 'Test',
+      active: true,
+      credentialVersion: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      parameters: { [switchParameter.id]: switchParameter },
+    },
+    { iv: 'test', ciphertext: 'test' },
+  );
+  const service = new ControlService(repo);
+  service.publisher = () => {};
+  const ingest = (kind: string, packet: unknown, retained = false) =>
+    service.consume(id, kind, Buffer.from(JSON.stringify(packet)), retained);
+  const connection = crypto.randomUUID();
+  const stateAt = (timestamp: number, revision = 0) => ({
+    credentialVersion: 1,
+    timestamp,
+    connectionId: connection,
+    revision,
+    parameters: [{ id: switchParameter.id, value: false }],
+  });
+  const availabilityAt = (
+    timestamp: number,
+    online: boolean,
+    connectionId = connection,
+  ) => ({ credentialVersion: 1, timestamp, connectionId, online });
+
+  // A device that connected before NTP stamps 1970-era time.
+  ingest('availability', availabilityAt(68_561, true));
+  ingest('state', stateAt(68_561));
+  const online = service.snapshot(id);
+  expect(online.online).toBe(true);
+  expect(Date.now() - online.state!.timestamp).toBeLessThan(5000);
+
+  // A clock far in the future does not poison later messages.
+  ingest('state', stateAt(Date.now() + 86_400_000, 1));
+  ingest('state', stateAt(68_562, 2));
+  expect(service.snapshot(id).state?.revision).toBe(2);
+
+  // Revisions still never move backwards within one connection.
+  ingest('state', stateAt(Date.now(), 1));
+  expect(service.snapshot(id).state?.revision).toBe(2);
+
+  // A Will from a superseded connection cannot take the device offline.
+  ingest('availability', availabilityAt(1, false, crypto.randomUUID()));
+  expect(service.snapshot(id).online).toBe(true);
+  ingest('availability', availabilityAt(1, false));
+  expect(service.snapshot(id).online).toBe(false);
+
+  // A retained replay never revives or overwrites live data.
+  ingest('availability', availabilityAt(Date.now(), true), true);
+  expect(service.snapshot(id).online).toBe(false);
+
+  // Telemetry keeps a live connection fresh; heartbeats may be absent.
+  ingest('availability', availabilityAt(1, true));
+  const realNow = Date.now;
+  try {
+    const start = realNow();
+    Date.now = () => start + 40_000;
+    service.touch(id);
+    Date.now = () => start + 80_000;
+    expect(service.snapshot(id).online).toBe(true);
+    Date.now = () => start + 130_000;
+    expect(service.snapshot(id).online).toBe(false);
+  } finally {
+    Date.now = realNow;
+  }
+  service.touch('unknown_device');
   repo.close();
 });

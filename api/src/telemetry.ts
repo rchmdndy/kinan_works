@@ -133,6 +133,8 @@ export class MqttTelemetryConsumer implements TelemetryConsumer {
         packet.credentialVersion !== device.credentialVersion
       )
         throw new Error('inactive or stale credentials');
+      // An authenticated packet proves the connection is alive, whatever its clock says.
+      this.control?.touch(deviceId);
       if (
         Math.abs(Date.now() - packet.timestamp) >
         this.config.TELEMETRY_MAX_CLOCK_SKEW_MS

@@ -7,7 +7,6 @@ import {
   stateSchema,
   COMMAND_TTL_MS,
   CONTROL_FRESH_MS,
-  RESULT_CLOCK_SKEW_MS,
   type Command,
   type DeviceState,
   type StoredCommand,
@@ -33,6 +32,14 @@ export class ControlService {
   private notify(deviceId: string): void {
     for (const listener of this.listeners.get(deviceId) ?? []) listener();
   }
+  /** Telemetry from an authenticated device keeps its current connection fresh. */
+  touch(deviceId: string): void {
+    const live = this.live.get(deviceId);
+    if (!live) return;
+    const wasFresh = Date.now() - live.seenAt < CONTROL_FRESH_MS;
+    live.seenAt = Date.now();
+    if (!wasFresh) this.notify(deviceId);
+  }
   snapshot(deviceId: string) {
     this.repository.expireCommands();
     const device = this.repository.getDevice(deviceId);
@@ -46,7 +53,6 @@ export class ControlService {
       stored.availability.credentialVersion === device.credentialVersion &&
       stored.state?.credentialVersion === device.credentialVersion &&
       stored.state.connectionId === live.connectionId &&
-      Date.now() - stored.state.timestamp < CONTROL_FRESH_MS &&
       this.publisher
     );
     return {
@@ -86,7 +92,6 @@ export class ControlService {
           result.credentialVersion !== device.credentialVersion ||
           result.credentialVersion !== command.credentialVersion ||
           result.connectionId !== command.connectionId ||
-          Math.abs(result.timestamp - Date.now()) > RESULT_CLOCK_SKEW_MS ||
           command.result
         )
           return;
@@ -101,11 +106,7 @@ export class ControlService {
       }
       if (kind === 'state') {
         const state = stateSchema.parse(raw);
-        if (
-          state.credentialVersion !== device.credentialVersion ||
-          state.timestamp > Date.now() + 5000
-        )
-          return;
+        if (state.credentialVersion !== device.credentialVersion) return;
         if (
           state.parameters.some(
             (value) =>
@@ -115,49 +116,45 @@ export class ControlService {
         )
           return;
         const previous = this.repository.getControl(deviceId).state;
-        if (
-          previous &&
-          previous.credentialVersion === state.credentialVersion &&
-          (state.timestamp < previous.timestamp ||
-            (state.connectionId === previous.connectionId &&
-              state.revision < previous.revision))
-        )
-          return;
-        this.repository.saveControl(deviceId, 'state', state);
-        this.confirmByRevision(deviceId, state);
+        if (previous && previous.credentialVersion === state.credentialVersion) {
+          // A retained replay never overwrites what the live stream stored.
+          if (retained) return;
+          if (
+            state.connectionId === previous.connectionId &&
+            state.revision < previous.revision
+          )
+            return;
+        }
+        // Device clocks are untrusted: freshness and display use arrival time.
+        const stamped = { ...state, timestamp: Date.now() };
+        this.repository.saveControl(deviceId, 'state', stamped);
+        this.confirmByRevision(deviceId, stamped);
         this.notify(deviceId);
       } else if (kind === 'availability') {
         const availability = availabilitySchema.parse(raw);
-        if (
-          availability.credentialVersion !== device.credentialVersion ||
-          availability.timestamp > Date.now() + 5000
-        )
-          return;
+        if (availability.credentialVersion !== device.credentialVersion) return;
         const previous = this.repository.getControl(deviceId).availability;
-        // A Will is prepared at connect time, not at disconnect time.
-        if (
-          previous &&
-          previous.credentialVersion === availability.credentialVersion &&
-          availability.connectionId !== previous.connectionId &&
-          availability.timestamp < previous.timestamp
-        )
-          return;
-        if (
-          previous &&
-          availability.online &&
-          availability.connectionId === previous.connectionId &&
-          availability.timestamp < previous.timestamp
-        )
-          return;
-        this.repository.saveControl(deviceId, 'availability', availability);
+        if (previous && previous.credentialVersion === availability.credentialVersion) {
+          if (retained) return;
+          // A Will from a superseded connection can arrive after its successor.
+          const live = this.live.get(deviceId);
+          if (
+            !availability.online &&
+            live &&
+            live.connectionId !== availability.connectionId
+          )
+            return;
+        }
+        const now = Date.now();
+        this.repository.saveControl(deviceId, 'availability', {
+          ...availability,
+          timestamp: now,
+        });
         if (!availability.online) this.live.delete(deviceId);
-        else if (
-          !retained &&
-          Date.now() - availability.timestamp < CONTROL_FRESH_MS
-        )
+        else if (!retained)
           this.live.set(deviceId, {
             connectionId: availability.connectionId,
-            seenAt: Date.now(),
+            seenAt: now,
           });
         this.notify(deviceId);
       }
