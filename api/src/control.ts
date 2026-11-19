@@ -116,7 +116,10 @@ export class ControlService {
         )
           return;
         const previous = this.repository.getControl(deviceId).state;
-        if (previous && previous.credentialVersion === state.credentialVersion) {
+        if (
+          previous &&
+          previous.credentialVersion === state.credentialVersion
+        ) {
           // A retained replay never overwrites what the live stream stored.
           if (retained) return;
           if (
@@ -134,7 +137,10 @@ export class ControlService {
         const availability = availabilitySchema.parse(raw);
         if (availability.credentialVersion !== device.credentialVersion) return;
         const previous = this.repository.getControl(deviceId).availability;
-        if (previous && previous.credentialVersion === availability.credentialVersion) {
+        if (
+          previous &&
+          previous.credentialVersion === availability.credentialVersion
+        ) {
           if (retained) return;
           // A Will from a superseded connection can arrive after its successor.
           const live = this.live.get(deviceId);
