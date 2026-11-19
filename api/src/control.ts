@@ -107,14 +107,13 @@ export class ControlService {
       if (kind === 'state') {
         const state = stateSchema.parse(raw);
         if (state.credentialVersion !== device.credentialVersion) return;
-        if (
-          state.parameters.some(
-            (value) =>
-              !device.parameters[value.id] ||
-              !acceptsValue(device.parameters[value.id]!, value.value),
-          )
-        )
-          return;
+        // Parameters the dashboard does not define, or with out-of-range
+        // values, are dropped; the rest of the state is still authoritative.
+        const parameters = state.parameters.filter(
+          (value) =>
+            device.parameters[value.id] &&
+            acceptsValue(device.parameters[value.id]!, value.value),
+        );
         const previous = this.repository.getControl(deviceId).state;
         if (
           previous &&
@@ -129,7 +128,7 @@ export class ControlService {
             return;
         }
         // Device clocks are untrusted: freshness and display use arrival time.
-        const stamped = { ...state, timestamp: Date.now() };
+        const stamped = { ...state, parameters, timestamp: Date.now() };
         this.repository.saveControl(deviceId, 'state', stamped);
         this.confirmByRevision(deviceId, stamped);
         this.notify(deviceId);

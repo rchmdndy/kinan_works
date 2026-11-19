@@ -194,12 +194,18 @@ test('dashboard definitions reject invented controls and sensor commands', () =>
         value,
       }),
     ).toThrow('dashboard parameter');
+  // Parameters unknown to the dashboard are dropped, never exposed as
+  // controls, and never block the rest of the state.
   ingest('state', {
     ...model.state,
-    revision: 99,
-    parameters: [{ id: 'invented', value: true }],
+    parameters: [...model.state.parameters, { id: 'invented', value: true }],
   });
-  expect(service.snapshot('device_test').state?.revision).toBe(0);
+  const accepted = service.snapshot('device_test');
+  expect(accepted.online).toBe(true);
+  expect(accepted.state?.parameters.map((p) => p.id)).not.toContain('invented');
+  expect(accepted.state?.parameters.map((p) => p.id)).toContain(
+    switchParameter.id,
+  );
   const command = service.issue('device_test', {
     commandId: crypto.randomUUID(),
     parameterId: 'target',
